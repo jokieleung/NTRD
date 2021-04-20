@@ -8,9 +8,19 @@ from torch.utils.data.dataset import Dataset
 import numpy as np
 from copy import deepcopy
 
+# import sys
+# # from importlib import reload
+# # reload(sys)
+# # sys.setdefaultencoding('utf-8')
+# import importlib
+# importlib.reload(sys)
+
+MOVIE_TOKEN = '__MOVIE__'
+
 class dataset(object):
     def __init__(self,filename,opt):
         self.entity2entityId=pkl.load(open('data/entity2entityId.pkl','rb'))
+        self.movieID2selection_label=pkl.load(open('movieID2selection_label.pkl','rb'))
         self.entity_max=len(self.entity2entityId)
 
         self.id2entity=pkl.load(open('data/id2entity.pkl','rb'))
@@ -40,7 +50,7 @@ class dataset(object):
 
         #if 'train' in filename:
 
-        #self.prepare_word2vec()
+        # self.prepare_word2vec()
         self.word2index = json.load(open('word2index_redial.json', encoding='utf-8'))
         self.key2index=json.load(open('key2index_3rd.json',encoding='utf-8'))
 
@@ -51,8 +61,10 @@ class dataset(object):
 
     def prepare_word2vec(self):
         import gensim
+        # model=gensim.models.word2vec.Word2Vec(self.corpus,vector_size=300,min_count=1)
         model=gensim.models.word2vec.Word2Vec(self.corpus,size=300,min_count=1)
         model.save('word2vec_redial')
+        # word2index = {word: i + 4 for i, word in enumerate(model.wv.index_to_key)}
         word2index = {word: i + 4 for i, word in enumerate(model.wv.index2word)}
         #word2index['_split_']=len(word2index)+4
         #json.dump(word2index, open('word2index_redial.json', 'w', encoding='utf-8'), ensure_ascii=False)
@@ -60,47 +72,79 @@ class dataset(object):
         import numpy as np
         
         word2index['_split_']=len(word2index)+4
+        print('---Saving word2vec data... ----')
         json.dump(word2index, open('word2index_redial.json', 'w', encoding='utf-8'), ensure_ascii=False)
 
         print(np.shape(word2embedding))
         np.save('word2vec_redial.npy', word2embedding)
 
-    def padding_w2v(self,sentence,max_length,transformer=True,pad=0,end=2,unk=3):
+    def padding_w2v(self,sentence,max_length,transformer=True,is_response=False,movies_gth=None,pad=0,end=2,unk=3):
         vector=[]
         concept_mask=[]
         dbpedia_mask=[]
         for word in sentence:
             vector.append(self.word2index.get(word,unk))
             #if word.lower() not in self.stopwords:
+            # key2index file may have problem due to the vocab size, TODO by Jokie 2021/04/12
             concept_mask.append(self.key2index.get(word.lower(),0))
             #else:
             #    concept_mask.append(0)
-            if '@' in word:
-                try:
-                    entity = self.id2entity[int(word[1:])]
-                    id=self.entity2entityId[entity]
-                except:
-                    id=self.entity_max
-                dbpedia_mask.append(id)
+            
+            # if '@' in word:
+            #     try:
+            #         entity = self.id2entity[int(word[1:])]
+            #         id=self.entity2entityId[entity]
+            #     except:
+            #         id=self.entity_max
+            #     dbpedia_mask.append(id)
+            # else:
+            #     dbpedia_mask.append(self.entity_max)
+            
+            if MOVIE_TOKEN in word:
+            # if is_response and MOVIE_TOKEN in word:
+                dbpedia_mask.append(1)
             else:
-                dbpedia_mask.append(self.entity_max)
+                dbpedia_mask.append(0)
         vector.append(end)
         concept_mask.append(0)
-        dbpedia_mask.append(self.entity_max)
+        # dbpedia_mask.append(self.entity_max)
+        dbpedia_mask.append(0)
 
         if len(vector)>max_length:
             if transformer:
-                return vector[-max_length:],max_length,concept_mask[-max_length:],dbpedia_mask[-max_length:]
+                movie_nums = sum(dbpedia_mask[-max_length:])
+                if movie_nums!=0:
+                    movies_gth = movies_gth[-movie_nums:]
+                else:
+                    movies_gth = []
+                return vector[-max_length:],max_length,concept_mask[-max_length:],dbpedia_mask[-max_length:],movies_gth
             else:
-                return vector[:max_length],max_length,concept_mask[:max_length],dbpedia_mask[:max_length]
+                movie_nums = sum(dbpedia_mask[:max_length])
+                movies_gth = movies_gth[:movie_nums]
+                return vector[:max_length],max_length,concept_mask[:max_length],dbpedia_mask[:max_length],movies_gth
         else:
             length=len(vector)
             return vector+(max_length-len(vector))*[pad],length,\
-                   concept_mask+(max_length-len(vector))*[0],dbpedia_mask+(max_length-len(vector))*[self.entity_max]
+                   concept_mask+(max_length-len(vector))*[0],dbpedia_mask+(max_length-len(vector))*[0],movies_gth
+            # return vector+(max_length-len(vector))*[pad],length,\
+            #        concept_mask+(max_length-len(vector))*[0],dbpedia_mask+(max_length-len(vector))*[self.entity_max]
+
+    def padding_all_movies(self,movies,max_length,transformer=True,pad=-1):
+        
+
+        if len(movies)>max_length:
+            # if transformer:
+            return movies[-max_length:]
+            # else:
+            #     return vector[:max_length],max_length,concept_mask[:max_length],dbpedia_mask[:max_length]
+        else:
+            length=len(movies)
+            return movies+(max_length-len(movies))*[pad], length
 
     def padding_context(self,contexts,pad=0,transformer=True):
         vectors=[]
         vec_lengths=[]
+        #--------------------Useless ---------------------
         if transformer==False:
             if len(contexts)>self.max_count:
                 for sen in contexts[-self.max_count:]:
@@ -115,19 +159,22 @@ class dataset(object):
                     vectors.append(vec)
                     vec_lengths.append(v_l)
                 return vectors+(self.max_count-length)*[[pad]*self.max_c_length],vec_lengths+[0]*(self.max_count-length),length
+        #--------------------Useless(end) ---------------------
         else:
             contexts_com=[]
             for sen in contexts[-self.max_count:-1]:
                 contexts_com.extend(sen)
                 contexts_com.append('_split_')
             contexts_com.extend(contexts[-1])
-            vec,v_l,concept_mask,dbpedia_mask=self.padding_w2v(contexts_com,self.max_c_length,transformer)
+            vec,v_l,concept_mask,dbpedia_mask,_=self.padding_w2v(contexts_com,self.max_c_length,transformer)
             return vec,v_l,concept_mask,dbpedia_mask,0
 
     def response_delibration(self,response,unk='MASKED_WORD'):
         new_response=[]
         for word in response:
-            if word in self.key2index:
+            # if word in self.key2index:
+            if '@' in word:
+                # print(word)
                 new_response.append(unk)
             else:
                 new_response.append(word)
@@ -143,18 +190,28 @@ class dataset(object):
                 continue
             else:
                 context_before = line['contexts']
-            context,c_lengths,concept_mask,dbpedia_mask,_=self.padding_context(line['contexts'])
-            response,r_length,_,_=self.padding_w2v(line['response'],self.max_r_length)
+
+            
+
+            # context,c_lengths,concept_mask,dbpedia_mask,_=self.padding_context(line['contexts'])
+            context,c_lengths,concept_mask,dbpedia_mask_context,_=self.padding_context(line['contexts'])
+            response,r_length,_,dbpedia_mask,movies_gth=self.padding_w2v(line['response'],self.max_r_length,transformer=True,is_response=True,movies_gth=line['all_movies'])
+            
+            #padding all_movies 
+            movies_gth, movies_num = self.padding_all_movies(movies_gth,self.max_r_length)
+            # movies_gth, movies_num = self.padding_all_movies(line['all_movies'],self.max_r_length)
+            
             if False:
-                mask_response,mask_r_length,_,_=self.padding_w2v(self.response_delibration(line['response']),self.max_r_length)
+                mask_response,mask_r_length,_,_,_=self.padding_w2v(self.response_delibration(line['response']),self.max_r_length)
             else:
                 mask_response, mask_r_length=response,r_length
             assert len(context)==self.max_c_length
             assert len(concept_mask)==self.max_c_length
-            assert len(dbpedia_mask)==self.max_c_length
+            # assert len(dbpedia_mask)==self.max_c_length
+            assert len(dbpedia_mask)==self.max_c_length or len(dbpedia_mask)==self.max_r_length
 
             data_set.append([np.array(context),c_lengths,np.array(response),r_length,np.array(mask_response),mask_r_length,line['entity'],
-                             line['movie'],concept_mask,dbpedia_mask,line['rec']])
+                             line['movie'],concept_mask,dbpedia_mask,line['rec'], np.array(movies_gth), movies_num])
         return data_set
 
     def co_occurance_ext(self,data):
@@ -215,17 +272,25 @@ class dataset(object):
         token_text = word_tokenize(sentence)
         num=0
         token_text_com=[]
+        masked_movie_by = MOVIE_TOKEN
+        masked_movie_num = 0
         while num<len(token_text):
             if token_text[num]=='@' and num+1<len(token_text):
-                token_text_com.append(token_text[num]+token_text[num+1])
+                # token_text_com.append(token_text[num]+token_text[num+1])
+                movie_token = token_text[num]+token_text[num+1]
+                token_text_com.append(movie_token)
                 num+=2
             else:
                 token_text_com.append(token_text[num])
                 num+=1
         movie_rec = []
-        for word in token_text_com:
-            if word[1:] in movies:
-                movie_rec.append(word[1:])
+        all_movie_selection_label = []
+        for i in range(len(token_text_com)):
+            if token_text_com[i][1:] in movies:
+                movie_rec.append(token_text_com[i][1:])
+                all_movie_selection_label.append(self.movieID2selection_label[int(token_text_com[i][1:])])
+                token_text_com[i] = masked_movie_by
+                masked_movie_num+=1
         movie_rec_trans=[]
         for movie in movie_rec:
             entity = self.id2entity[int(movie)]
@@ -233,7 +298,8 @@ class dataset(object):
                 movie_rec_trans.append(self.entity2entityId[entity])
             except:
                 pass
-        return token_text_com,movie_rec_trans
+        assert masked_movie_num == len(all_movie_selection_label)
+        return token_text_com,movie_rec_trans,all_movie_selection_label,masked_movie_num
 
     def _context_reformulate(self,context,movies,altitude,ini_altitude,s_id,re_id):
         last_id=None
@@ -249,9 +315,21 @@ class dataset(object):
                         pass
             except:
                 pass
-            token_text,movie_rec=self.detect_movie(message['text'],movies)
+
+            token_text,movie_rec,all_movie_selection_label,masked_movie_num=self.detect_movie(message['text'],movies)
+            # if message['senderWorkerId']==re_id  and len(context_list)>0:
+            #     token_text,movie_rec,all_movie_selection_label,masked_movie_num=self.detect_movie(message['text'],movies)
+                
+            #     # print('processed context', u' '.join(token_text).encode('utf-8').strip())
+            #     # print('movie rec:', movie_rec)
+            #     # print('all_movie_selection_label :', all_movie_selection_label)
+            # else:
+            #     token_text,movie_rec,_,_=self.detect_movie(message['text'],movies)
+            #     all_movie_selection_label=[]
+            
             if len(context_list)==0:
-                context_dict={'text':token_text,'entity':entities+movie_rec,'user':message['senderWorkerId'],'movie':movie_rec}
+                # context_dict={'text':token_text,'entity':entities+movie_rec,'user':message['senderWorkerId'],'movie':movie_rec}
+                context_dict={'text':token_text,'entity':entities+movie_rec,'user':message['senderWorkerId'],'movie':movie_rec,'movies_selection_labels': all_movie_selection_label}
                 context_list.append(context_dict)
                 last_id=message['senderWorkerId']
                 continue
@@ -259,11 +337,35 @@ class dataset(object):
                 context_list[-1]['text']+=token_text
                 context_list[-1]['entity']+=entities+movie_rec
                 context_list[-1]['movie']+=movie_rec
+                # if message['senderWorkerId']==re_id and len(context_list)>0:
+                #     context_list[-1]['movies_selection_labels']+=all_movie_selection_label
+                context_list[-1]['movies_selection_labels']+=all_movie_selection_label
             else:
+                # context_dict = {'text': token_text, 'entity': entities+movie_rec,
+                #            'user': message['senderWorkerId'], 'movie':movie_rec, 'movies_selection_labels': all_movie_selection_label}
                 context_dict = {'text': token_text, 'entity': entities+movie_rec,
                            'user': message['senderWorkerId'], 'movie':movie_rec}
+                # if message['senderWorkerId']==re_id and len(context_list)>0:
+                #     context_dict['movies_selection_labels']=all_movie_selection_label
+                context_dict['movies_selection_labels']=all_movie_selection_label
                 context_list.append(context_dict)
                 last_id = message['senderWorkerId']
+
+            # if message['senderWorkerId']==re_id and len(context_list)>0:
+            movie_num=context_list[-1]['text'].count(MOVIE_TOKEN)
+            len_labels = len(context_list[-1]['movies_selection_labels'])
+            assert movie_num == len_labels
+
+            # if 'zombie' in ' '.join(context_list[-1]['text']) and 'focuses' in ' '.join(context_list[-1]['text']) and 'survive' in ' '.join(context_list[-1]['text']) and 'individual' in ' '.join(context_list[-1]['text']):
+            #     print(u' '.join(context_list[-1]['text']).encode('utf-8').strip())
+            #     print('movie_num', movie_num)
+            #     # print('len(movies_selection_labels', len_labels)
+            #     # print(u' '.join(context_list[-1]['text']).encode('utf-8').strip())
+            #     print(context_list[-1]['movies_selection_labels'])
+            #     print(context_list[-1]['movie'])
+            #     # print('-----------------------------------')
+            
+            
 
         cases=[]
         contexts=[]
@@ -281,9 +383,10 @@ class dataset(object):
                 if len(context_dict['movie'])!=0:
                     for movie in context_dict['movie']:
                         #if movie not in entities_set:
-                        cases.append({'contexts': deepcopy(contexts), 'response': response, 'entity': deepcopy(entities), 'movie': movie, 'rec':1})
+                        cases.append({'contexts': deepcopy(contexts), 'response': response, 'entity': deepcopy(entities), 'movie': movie, 'rec':1, 'all_movies':context_dict['movies_selection_labels']})
+                        # cases[-1]['all_movies']=context_dict['movie']
                 else:
-                    cases.append({'contexts': deepcopy(contexts), 'response': response, 'entity': deepcopy(entities), 'movie': 0, 'rec':0})
+                    cases.append({'contexts': deepcopy(contexts), 'response': response, 'entity': deepcopy(entities), 'movie': 0, 'rec':0,'all_movies':context_dict['movies_selection_labels']})
 
                 contexts.append(context_dict['text'])
                 for word in context_dict['entity']:
@@ -312,7 +415,7 @@ class CRSdataset(Dataset):
             movie_vec[en] = 1 / len(movie)
         return context, c_lengths, response, r_length, entity, movie_vec, concept_mask, dbpedia_mask, rec
         '''
-        context, c_lengths, response, r_length, mask_response, mask_r_length, entity, movie, concept_mask, dbpedia_mask, rec= self.data[index]
+        context, c_lengths, response, r_length, mask_response, mask_r_length, entity, movie, concept_mask, dbpedia_mask, rec, movies_gth, movies_num= self.data[index]
         entity_vec = np.zeros(self.entity_num)
         entity_vector=np.zeros(50,dtype=np.int)
         point=0
@@ -331,7 +434,7 @@ class CRSdataset(Dataset):
             if db!=0:
                 db_vec[db]=1
 
-        return context, c_lengths, response, r_length, mask_response, mask_r_length, entity_vec, entity_vector, movie, np.array(concept_mask), np.array(dbpedia_mask), concept_vec, db_vec, rec
+        return context, c_lengths, response, r_length, mask_response, mask_r_length, entity_vec, entity_vector, movie, np.array(concept_mask), np.array(dbpedia_mask), concept_vec, db_vec, rec, movies_gth, movies_num
 
     def __len__(self):
         return len(self.data)

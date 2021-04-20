@@ -75,6 +75,9 @@ class CrossModel(nn.Module):
         super().__init__()  # self.pad_idx, self.start_idx, self.end_idx)
         self.batch_size = opt['batch_size']
         self.max_r_length = opt['max_r_length']
+        self.beam = opt['beam']
+
+        self.index2word={dictionary[key]:key for key in dictionary}
 
         self.NULL_IDX = padding_idx
         self.END_IDX = end_idx
@@ -148,6 +151,8 @@ class CrossModel(nn.Module):
 
         self.output_en = nn.Linear(opt['dim'], opt['n_entity'])
 
+        self.matching_linear = nn.Linear(opt['embedding_size'], opt['n_movies'])
+
         self.embedding_size=opt['embedding_size']
         self.dim=opt['dim']
 
@@ -170,7 +175,12 @@ class CrossModel(nn.Module):
 
         self.mask4key=torch.Tensor(np.load('mask4key.npy')).cuda()
         self.mask4movie=torch.Tensor(np.load('mask4movie.npy')).cuda()
-        self.mask4=self.mask4key+self.mask4movie
+
+        # Original mask
+        # self.mask4=self.mask4key+self.mask4movie
+
+        # tmp hack for runable By Jokie 2021/04/12 for template generation task
+        self.mask4=torch.ones(len(dictionary) + 4).cuda()
         if is_finetune:
             params = [self.dbpedia_RGCN.parameters(), self.concept_GCN.parameters(),
                       self.concept_embeddings.parameters(),
@@ -179,6 +189,18 @@ class CrossModel(nn.Module):
             for param in params:
                 for pa in param:
                     pa.requires_grad = False
+
+    def vector2sentence(self,batch_sen):
+        sentences=[]
+        for sen in batch_sen.numpy().tolist():
+            sentence=[]
+            for word in sen:
+                if word>3:
+                    sentence.append(self.index2word[word])
+                elif word==3:
+                    sentence.append('_UNK_')
+            sentences.append(sentence)
+        return sentences
 
     def _starts(self, bsz):
         """Return bsz start tokens."""
@@ -210,6 +232,7 @@ class CrossModel(nn.Module):
         xs = self._starts(bsz)
         incr_state = None
         logits = []
+        latents = []
         for i in range(maxlen):
             # todo, break early if all beams saw EOS
             scores, incr_state = self.decoder(xs, encoder_states, encoder_states_kg, encoder_states_db, incr_state)
@@ -222,6 +245,8 @@ class CrossModel(nn.Module):
 
             copy_latent = self.copy_norm(torch.cat([kg_attn_norm.unsqueeze(1), db_attn_norm.unsqueeze(1), scores], -1))
 
+            latents.append(copy_latent)
+
             # logits = self.output(latent)
             con_logits = self.representation_bias(copy_latent)*self.mask4.unsqueeze(0).unsqueeze(0)#F.linear(copy_latent, self.embeddings.weight)
             voc_logits = F.linear(scores, self.embeddings.weight)
@@ -231,6 +256,7 @@ class CrossModel(nn.Module):
 
             sum_logits = voc_logits + con_logits #* (1 - gate)
             _, preds = sum_logits.max(dim=-1)
+            
             #scores = F.linear(scores, self.embeddings.weight)
 
             #print(attention_map)
@@ -254,7 +280,122 @@ class CrossModel(nn.Module):
             if all_finished:
                 break
         logits = torch.cat(logits, 1)
-        return logits, xs
+        latents = torch.cat(latents, 1)
+        # return logits, xs
+        return logits, xs, latents
+
+    def decode_beam_search_with_kg(self, token_encoding, encoder_states_kg, encoder_states_db, attention_kg, attention_db, maxlen=None, beam=4):
+        entity_reps, entity_mask = encoder_states_db
+        word_reps, word_mask = encoder_states_kg
+        entity_emb_attn = attention_db
+        word_emb_attn = attention_kg
+        batch_size = token_encoding[0].shape[0]
+        
+        inputs = self._starts(batch_size).long().reshape(1, batch_size, -1)
+        incr_state = None
+
+        sequences = [[[list(), list(), 1.0]]] * batch_size
+        all_latents = []
+        # for i in range(self.response_truncate):
+        for i in range(maxlen):
+            if i == 1:
+                token_encoding = (token_encoding[0].repeat(beam, 1, 1),
+                                  token_encoding[1].repeat(beam, 1, 1))
+                entity_reps = entity_reps.repeat(beam, 1, 1)
+                entity_emb_attn = entity_emb_attn.repeat(beam, 1)
+                entity_mask = entity_mask.repeat(beam, 1)
+                word_reps = word_reps.repeat(beam, 1, 1)
+                word_emb_attn = word_emb_attn.repeat(beam, 1)
+                word_mask = word_mask.repeat(beam, 1)
+
+                encoder_states_kg = word_reps, word_mask
+                encoder_states_db = entity_reps, entity_mask
+
+            # at beginning there is 1 candidate, when i!=0 there are 4 candidates
+            if i != 0:
+                inputs = []
+                for d in range(len(sequences[0])):
+                    for j in range(batch_size):
+                        text = sequences[j][d][0]
+                        inputs.append(text)
+                inputs = torch.stack(inputs).reshape(beam, batch_size, -1)  # (beam, batch_size, _)
+
+            with torch.no_grad():
+                
+                dialog_latent, incr_state = self.decoder(inputs.reshape(len(sequences[0]) * batch_size, -1), token_encoding, encoder_states_kg, encoder_states_db, incr_state)
+                # dialog_latent, incr_state = self.conv_decoder(
+                #     inputs.reshape(len(sequences[0]) * batch_size, -1),
+                #     token_encoding, word_reps, word_mask,
+                #     entity_reps, entity_mask, incr_state
+                # )
+                dialog_latent = dialog_latent[:, -1:, :]  # (bs, 1, dim)
+                
+                concept_latent = self.kg_attn_norm(word_emb_attn).unsqueeze(1)
+                db_latent = self.db_attn_norm(entity_emb_attn).unsqueeze(1)
+
+                # print('concept_latent shape', concept_latent.shape)
+                # print('db_latent shape', db_latent.shape)
+                # print('dialog_latent shape', dialog_latent.shape)
+
+                copy_latent = self.copy_norm(torch.cat((db_latent, concept_latent, dialog_latent), dim=-1))
+
+                # WAY1
+                # if i != 0:
+                #     print('dialog_latent shape', dialog_latent.shape)
+                #     print('copy_latent shape', copy_latent.shape)
+                #     all_latents.append(copy_latent)
+                #WAY2
+                all_latents.append(copy_latent)
+
+                # copy_logits = self.copy_output(copy_latent) * self.copy_mask.unsqueeze(0).unsqueeze(0)
+                copy_logits = self.representation_bias(copy_latent)*self.mask4.unsqueeze(0).unsqueeze(0)
+                gen_logits = F.linear(dialog_latent, self.embeddings.weight)
+                sum_logits = copy_logits + gen_logits
+
+            logits = sum_logits.reshape(len(sequences[0]), batch_size, 1, -1)
+            # turn into probabilities,in case of negative numbers
+            probs, preds = torch.nn.functional.softmax(logits).topk(beam, dim=-1)
+
+            # (candeidate, bs, 1 , beam) during first loop, candidate=1, otherwise candidate=beam
+
+            for j in range(batch_size):
+                all_candidates = []
+                for n in range(len(sequences[j])):
+                    for k in range(beam):
+                        prob = sequences[j][n][2]
+                        logit = sequences[j][n][1]
+                        if logit == []:
+                            logit_tmp = logits[n][j][0].unsqueeze(0)
+                        else:
+                            logit_tmp = torch.cat((logit, logits[n][j][0].unsqueeze(0)), dim=0)
+                        seq_tmp = torch.cat((inputs[n][j].reshape(-1), preds[n][j][0][k].reshape(-1)))
+                        candidate = [seq_tmp, logit_tmp, prob * probs[n][j][0][k]]
+                        all_candidates.append(candidate)
+                ordered = sorted(all_candidates, key=lambda tup: tup[2], reverse=True)
+                sequences[j] = ordered[:beam]
+
+            # check if everyone has generated an end token
+            all_finished = ((inputs == self.END_IDX).sum(dim=1) > 0).sum().item() == batch_size
+            if all_finished:
+                break
+        
+        # original solution
+        # logits = torch.stack([seq[0][1] for seq in sequences])
+        # inputs = torch.stack([seq[0][0] for seq in sequences])
+
+        out_logits = []
+        out_preds = []
+        for beam_num in range(beam):
+            cur_out_logits = torch.stack([seq[beam_num][1] for seq in sequences])
+            curout_preds = torch.stack([seq[beam_num][0] for seq in sequences])
+            out_logits.append(cur_out_logits)
+            out_preds.append(curout_preds)
+
+        logits = torch.cat([x for x in out_logits], dim=0)
+        inputs = torch.cat([x for x in out_preds], dim=0)
+        all_latents =  torch.cat(all_latents, 1)
+
+        return logits, inputs, all_latents
 
     def decode_forced(self, encoder_states, encoder_states_kg, encoder_states_db, attention_kg, attention_db, ys):
         """
@@ -304,13 +445,15 @@ class CrossModel(nn.Module):
         #logits = self.output(latent)
         con_logits = self.representation_bias(copy_latent)*self.mask4.unsqueeze(0).unsqueeze(0)#F.linear(copy_latent, self.embeddings.weight)
         logits = F.linear(latent, self.embeddings.weight)
-        # print(logits.size())
+        # print('logit size', logits.size())
         # print(mem_logits.size())
         #gate=F.sigmoid(self.gen_gate_norm(latent))
 
         sum_logits = logits+con_logits#*(1-gate)
         _, preds = sum_logits.max(dim=2)
-        return logits, preds
+        
+        return logits, preds, copy_latent
+        # return logits, preds, latent
 
     def infomax_loss(self, con_nodes_features, db_nodes_features, con_user_emb, db_user_emb, con_label, db_label, mask):
         #batch*dim
@@ -325,7 +468,7 @@ class CrossModel(nn.Module):
 
         return torch.mean(info_db_loss), torch.mean(info_con_loss)
 
-    def forward(self, xs, ys, mask_ys, concept_mask, db_mask, seed_sets, labels, con_label, db_label, entity_vector, rec, test=True, cand_params=None, prev_enc=None, maxlen=None,
+    def forward(self, xs, ys, mask_ys, concept_mask, db_mask, seed_sets, labels, con_label, db_label, entity_vector, rec,movies_gth=None, movie_nums=None, test=True, cand_params=None, prev_enc=None, maxlen=None,
                 bsz=None):
         """
         Get output predictions from the model.
@@ -369,7 +512,7 @@ class CrossModel(nn.Module):
         # use cached encoding if available
         #xxs = self.embeddings(xs)
         #mask=xs == self.pad_idx
-        encoder_states = prev_enc if prev_enc is not None else self.encoder(xs)
+        # encoder_states = prev_enc if prev_enc is not None else self.encoder(xs)
 
         # graph network
         db_nodes_features = self.dbpedia_RGCN(None, self.db_edge_idx, self.db_edge_type)
@@ -418,6 +561,7 @@ class CrossModel(nn.Module):
         self.user_rep=user_emb
 
         #generation---------------------------------------------------------------------------------------------------
+        encoder_states = prev_enc if prev_enc is not None else self.encoder(xs)
         con_nodes_features4gen=con_nodes_features#self.concept_GCN4gen(con_nodes_features,self.concept_edge_sets)
         con_emb4gen = con_nodes_features4gen[concept_mask]
         con_mask4gen = concept_mask != self.concept_padding
@@ -430,19 +574,95 @@ class CrossModel(nn.Module):
         db_encoding=(self.db_norm(db_emb4gen),db_mask4gen.cuda())
 
         if test == False:
-            # use teacher forcing
-            scores, preds = self.decode_forced(encoder_states, kg_encoding, db_encoding, con_user_emb, db_user_emb, mask_ys)
+            # use teacher forcing  scores, pred: (FloatTensor[bsz, ys, vocab], LongTensor[bsz, ys])
+            # print('shape of entity_scores', entity_scores.shape)
+            # print('shape of rec label', labels.shape)
+            # print('rec label', labels)
+            # print('shape of movie label', movies_gth.shape)
+            movies_gth = movies_gth * (movies_gth!=-1)
+
+            # print('shape of movies_gth', torch.sum(movies_gth!=0, dim=(0,1)))
+            # print('shape of gth masked hole num', torch.sum((mask_ys == 6), dim=(0,1)))
+            # print('movie_nums', movie_nums)
+            # print('__MOVIE__ position ', torch.sum((mask_ys == 6), dim=(1)))
+            assert torch.sum(movies_gth!=0, dim=(0,1)) == torch.sum((mask_ys == 6), dim=(0,1))
+
+            # cant run case : case 1 : [-15] case2: [-8] By Jokie tmp 2021/4/14
+            # print(movies_gth[-15])
+            # print(mask_ys[-15])
+            # print(self.vector2sentence(mask_ys.cpu())[-15])
+
+            # print('shape of encoder_states,kg_encoding,db_encoding,con_user_emb, db_user_emb, mask_ys', encoder_states[0].shape,kg_encoding[0].shape,db_encoding[0].shape,con_user_emb.shape, db_user_emb.shape, mask_ys.shape)
+            scores, preds, latent = self.decode_forced(encoder_states, kg_encoding, db_encoding, con_user_emb, db_user_emb, mask_ys)
+            # print('shape of scores,preds, mask_ys, latent', scores.shape,preds.shape,mask_ys.shape,latent.shape)
             gen_loss = torch.mean(self.compute_loss(scores, mask_ys))
 
+            #-------------------------------- stage2 movie selection loss-------------- by Jokie
+            masked_for_selection_token = (mask_ys == 6)
+
+            selected_token_latent = torch.masked_select(latent, masked_for_selection_token.unsqueeze(-1).expand_as(latent)).view(-1, latent.shape[-1])
+            matching_logits = self.matching_linear(selected_token_latent)
+            # matching_logits = self_attn(selected_token_latent, kg_attention, context(which is encoder_states),) #TODO change for self-attn
+
+            _, matching_pred = matching_logits.max(dim=-1) # [bsz * dynamic_movie_nums]
+            movies_gth = torch.masked_select(movies_gth, (movies_gth!=0))
+            selection_loss = torch.mean(self.compute_loss(matching_logits, movies_gth)) # movies_gth.squeeze(0):[bsz * dynamic_movie_nums]
+            # print('shape of selected_token_latent', selected_token_latent.shape)
+            # print('selection_loss', selection_loss)
+            
+
+            
         else:
-            scores, preds = self.decode_greedy(
+            #---------------------------------------------Beam Search decode----------------------------------------
+            # scores, preds, latent = self.decode_beam_search_with_kg(
+            #     encoder_states, kg_encoding, db_encoding, con_user_emb, db_user_emb,
+            #     maxlen, self.beam)
+            # # #pred here is soft template prediction
+            # # # --------------post process the prediction to full sentence
+            # # #-------------------------------- stage2 movie selection loss-------------- by Jokie
+            # preds_for_selection = preds[:, 1:] # skip the start_ind
+            # # preds_for_selection = preds[:, 2:] # skip the start_ind
+            # masked_for_selection_token = (preds_for_selection == 6)
+
+            # # print('latent shape', latent.shape)
+            # # print('preds_for_selection: ', preds_for_selection)
+            # # print('masked_for_selection_token shape', masked_for_selection_token.shape)
+
+            # selected_token_latent = torch.masked_select(latent, masked_for_selection_token.unsqueeze(-1).expand_as(latent)).view(-1, latent.shape[-1])
+            # print('selected_token_latent shape: ' , selected_token_latent)
+            # matching_logits = self.matching_linear(selected_token_latent)
+
+            # _, matching_pred = matching_logits.max(dim=-1) # [bsz * dynamic_movie_nums]
+            # # print('matching_pred', matching_pred.shape)
+
+
+            #---------------------------------------------Greedy decode-------------------------------------------
+            scores, preds, latent = self.decode_greedy(
                 encoder_states, kg_encoding, db_encoding, con_user_emb, db_user_emb,
                 bsz,
                 maxlen or self.longest_label
             )
-            gen_loss = None
 
-        return scores, preds, entity_scores, rec_loss, gen_loss, mask_loss, info_db_loss, info_con_loss
+            # #pred here is soft template prediction
+            # # --------------post process the prediction to full sentence
+            # #-------------------------------- stage2 movie selection loss-------------- by Jokie
+            preds_for_selection = preds[:, 1:] # skip the start_ind
+            masked_for_selection_token = (preds_for_selection == 6)
+
+            # print('latent shape', latent.shape)
+            # print('masked_for_selection_token shape', masked_for_selection_token.shape)
+
+            selected_token_latent = torch.masked_select(latent, masked_for_selection_token.unsqueeze(-1).expand_as(latent)).view(-1, latent.shape[-1])
+            matching_logits = self.matching_linear(selected_token_latent)
+
+            _, matching_pred = matching_logits.max(dim=-1) # [bsz * dynamic_movie_nums]
+            # print('matching_pred', matching_pred.shape)
+            #---------------------------------------------Greedy decode(end)-------------------------------------------
+
+            gen_loss = None
+            selection_loss = None
+
+        return scores, preds, entity_scores, rec_loss, gen_loss, mask_loss, info_db_loss, info_con_loss, selection_loss, matching_pred
 
     def reorder_encoder_states(self, encoder_states, indices):
         """
@@ -536,11 +756,12 @@ class CrossModel(nn.Module):
         loss = self.criterion(output_view.cuda(), score_view.cuda())
         return loss
 
-    def save_model(self):
-        torch.save(self.state_dict(), 'saved_model/net_parameter1.pkl')
+    def save_model(self,model_name='saved_model/net_parameter1.pkl'):
+        torch.save(self.state_dict(), model_name)
 
-    def load_model(self):
-        self.load_state_dict(torch.load('saved_model/net_parameter1.pkl'))
+    def load_model(self,model_name='saved_model/net_parameter1.pkl'):
+        # self.load_state_dict(torch.load('saved_model/net_parameter1.pkl'))
+        self.load_state_dict(torch.load(model_name), strict= False)
 
     def output(self, tensor):
         # project back to vocabulary
