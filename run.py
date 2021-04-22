@@ -26,8 +26,8 @@ Examples
 import numpy as np
 from tqdm import tqdm
 from math import exp
-import os
-os.environ['CUDA_VISIBLE_DEVICES']='1'
+# import os
+# os.environ['CUDA_VISIBLE_DEVICES']='1'
 import signal
 import json
 import argparse
@@ -55,9 +55,9 @@ def setup_args():
     train = argparse.ArgumentParser()
     train.add_argument("-max_c_length","--max_c_length",type=int,default=256)
     train.add_argument("-max_r_length","--max_r_length",type=int,default=30)
-    train.add_argument("-beam","--beam",type=int,default=2)
+    train.add_argument("-beam","--beam",type=int,default=1)
     # train.add_argument("-max_r_length","--max_r_length",type=int,default=256)
-    train.add_argument("-batch_size","--batch_size",type=int,default=32)
+    train.add_argument("-batch_size","--batch_size",type=int,default=128)
     train.add_argument("-max_count","--max_count",type=int,default=5)
     train.add_argument("-use_cuda","--use_cuda",type=bool,default=True)
     train.add_argument("-is_template","--is_template",type=bool,default=True)
@@ -67,6 +67,7 @@ def setup_args():
     train.add_argument("-momentum","--momentum",type=float,default=0)
     train.add_argument("-is_finetune","--is_finetune",type=bool,default=False)
     train.add_argument("-embedding_type","--embedding_type",type=str,default='random')
+    train.add_argument("-save_exp_name","--save_exp_name",type=str,default='saved_model/sattn_dialog_model')
     train.add_argument("-epoch","--epoch",type=int,default=30)
     train.add_argument("-gpu","--gpu",type=str,default='2')
     train.add_argument("-gradient_clip","--gradient_clip",type=float,default=0.1)
@@ -386,6 +387,7 @@ class TrainLoop_fusion_gen():
 
         self.movieID2selection_label=pkl.load(open('movieID2selection_label.pkl','rb'))
         self.selection_label2movieID={self.movieID2selection_label[key]:key for key in self.movieID2selection_label}
+        self.id2entity=pkl.load(open('data/id2entity.pkl','rb'))
 
         self.batch_size=self.opt['batch_size']
         self.epoch=self.opt['epoch']
@@ -456,7 +458,7 @@ class TrainLoop_fusion_gen():
                 losses.append([gen_loss, selection_loss])
                 self.backward(joint_loss)
                 self.update_params()
-                if num%50==0:
+                if num%20==0:
                     print('gen loss is %f'%(sum([l[0] for l in losses])/len(losses)))
                     print('selection_loss is %f'%(sum([l[1] for l in losses])/len(losses)))
                     losses=[]
@@ -467,15 +469,15 @@ class TrainLoop_fusion_gen():
                 pass
             else:
                 best_val_gen = output_metrics_gen["dist4"]
-                self.model.save_model(model_name='saved_model/generation_model_best.pkl')
+                self.model.save_model(model_name= self.opt['save_exp_name'] + '_best.pkl')
                 print("generator model saved once------------------------------------------------")
                 print("best dist4 is :", best_val_gen)
 
             if i % 5 ==0: # save each 5 epoch
-                model_name = 'saved_model/generation_model_' + str(self.epoch) + '.pkl'
+                model_name = self.opt['save_exp_name'] + '_' + str(i) + '.pkl'
                 self.model.save_model(model_name=model_name)
                 print("generator model saved once------------------------------------------------")
-                print("best dist4 is :", best_val_gen)
+                print('cur selection_loss is %f'%(sum([l[1] for l in losses])/len(losses)))
 
         _=self.val(is_test=True)
 
@@ -515,7 +517,10 @@ class TrainLoop_fusion_gen():
             #-----------template pro-process gth response and prediction--------------------
             if self.is_template:
                 golden_sum.extend(self.template_vector2sentence(response.cpu(), movies_gth.cpu()))
-                inference_sum.extend(self.template_vector2sentence(preds.cpu(), matching_pred.cpu()))
+                if matching_pred is not None:
+                    inference_sum.extend(self.template_vector2sentence(preds.cpu(), matching_pred.cpu()))
+                else:
+                    inference_sum.extend(self.template_vector2sentence(preds.cpu(), None))
 
             else:
                 golden_sum.extend(self.vector2sentence(response.cpu()))
@@ -542,13 +547,22 @@ class TrainLoop_fusion_gen():
         # f.writelines([' '.join(sen)+'\n' for sen in context_sum])
         # f.close()
 
-        # f=open('output_filled_template_test.txt','w',encoding='utf-8')
-        # f.writelines([' '.join(sen)+'\n' for sen in inference_sum])
-        # f.close()
+        f=open('output_self_attn_no_decode_first_filled_template_test.txt','w',encoding='utf-8')
+        f.writelines([' '.join(sen)+'\n' for sen in inference_sum])
+        f.close()
 
         # f=open('golden_test.txt','w',encoding='utf-8')
         # f.writelines([' '.join(sen)+'\n' for sen in golden_sum])
         # f.close()
+
+        # f=open('case_visualize.txt','w',encoding='utf-8')
+        # for cont, hypo, gold in zip(context_sum, inference_sum, golden_sum):
+        #     f.writelines('context: '+' '.join(cont)+'\n')
+        #     f.writelines('hypo: '+' '.join(hypo)+'\n')
+        #     f.writelines('gold: '+' '.join(gold)+'\n')
+        #     f.writelines('\n')
+        # f.close()
+
         return output_dict_gen
 
     def metrics_cal_gen(self,rec_loss,preds,responses,recs, beam=1):
@@ -657,10 +671,12 @@ class TrainLoop_fusion_gen():
     def template_vector2sentence(self,batch_sen, batch_selection_pred):
         sentences=[]
         all_movie_labels = []
-        batch_selection_pred = batch_selection_pred * (batch_selection_pred!=-1)
-        batch_selection_pred = torch.masked_select(batch_selection_pred, (batch_selection_pred!=0))
-        for movie in batch_selection_pred.numpy().tolist():
-            all_movie_labels.append(movie)
+        if batch_selection_pred is not None:
+            batch_selection_pred = batch_selection_pred * (batch_selection_pred!=-1)
+            batch_selection_pred = torch.masked_select(batch_selection_pred, (batch_selection_pred!=0))
+            for movie in batch_selection_pred.numpy().tolist():
+                all_movie_labels.append(movie)
+
         # print('all_movie_labels:', all_movie_labels)
         curr_movie_token = 0
         for sen in batch_sen.numpy().tolist():
@@ -670,8 +686,18 @@ class TrainLoop_fusion_gen():
                     if word==6: #if MOVIE token
                         # print('all_movie_labels[curr_movie_token]',all_movie_labels[curr_movie_token])
                         # print('selection_label2movieID',self.selection_label2movieID[all_movie_labels[curr_movie_token]])
+
+                        # WAY1: original method
                         sentence.append('@' + str(self.selection_label2movieID[all_movie_labels[curr_movie_token]]))
-                        # sentence.append( '@' + self.selection_label2movieID[batch_selection_pred])
+
+
+                        # WAY2: print out the movie name, but should comment when calculating the gen metrics
+                        # if self.id2entity[self.selection_label2movieID[all_movie_labels[curr_movie_token]]] is not None:
+                        #     sentence.append(self.id2entity[self.selection_label2movieID[all_movie_labels[curr_movie_token]]].split('/')[-1])
+                        # else:
+                        #     sentence.append('@' + str(self.selection_label2movieID[all_movie_labels[curr_movie_token]]))
+
+
                         curr_movie_token +=1
                     else:
                         sentence.append(self.index2word[word])
@@ -784,6 +810,7 @@ class TrainLoop_fusion_gen():
 
 if __name__ == '__main__':
     args=setup_args().parse_args()
+    import os
     os.environ['CUDA_VISIBLE_DEVICES']=args.gpu
     print('CUDA_VISIBLE_DEVICES:', os.environ['CUDA_VISIBLE_DEVICES'])
     print(vars(args))
@@ -793,9 +820,11 @@ if __name__ == '__main__':
         loop.train()
     else:
         loop=TrainLoop_fusion_gen(vars(args),is_finetune=True)
-        loop.model.load_model('saved_model/generation_model_best.pkl')
+        #Tips: should at least load one of the model By Jokie
+        # loop.model.load_model('saved_model/generation_model_best.pkl')
         # loop.model.load_model('saved_model/generation_model.pkl')
-        # loop.model.load_model()
+        # loop.model.load_model('saved_model/self_attn_generation_model_22.pkl')
+        loop.model.load_model()
         loop.train()
     # met=loop.val(True)
     #print(met)

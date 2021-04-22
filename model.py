@@ -1,4 +1,4 @@
-from models.transformer import TorchGeneratorModel,_build_encoder,_build_decoder,_build_encoder_mask, _build_encoder4kg, _build_decoder4kg
+from models.transformer import TorchGeneratorModel,_build_encoder,_build_decoder,_build_encoder_mask, _build_encoder4kg, _build_decoder4kg, _build_decoder_selection
 from models.utils import _create_embeddings,_create_entity_embeddings
 from models.graph import SelfAttentionLayer,SelfAttentionLayer_batch
 from torch_geometric.nn.conv.rgcn_conv import RGCNConv
@@ -79,6 +79,8 @@ class CrossModel(nn.Module):
 
         self.index2word={dictionary[key]:key for key in dictionary}
 
+        self.movieID2selection_label=pkl.load(open('movieID2selection_label.pkl','rb'))
+
         self.NULL_IDX = padding_idx
         self.END_IDX = end_idx
         self.register_buffer('START', torch.LongTensor([start_idx]))
@@ -122,11 +124,18 @@ class CrossModel(nn.Module):
             opt, dictionary, self.embeddings, self.pad_idx,
             n_positions=n_positions,
         )
+
+        self.selection_cross_attn_decoder = _build_decoder_selection(
+            opt, len(self.movieID2selection_label), self.pad_idx,
+            n_positions=n_positions,
+        )
         self.db_norm = nn.Linear(opt['dim'], opt['embedding_size'])
         self.kg_norm = nn.Linear(opt['dim'], opt['embedding_size'])
 
         self.db_attn_norm=nn.Linear(opt['dim'],opt['embedding_size'])
         self.kg_attn_norm=nn.Linear(opt['dim'],opt['embedding_size'])
+
+        self.enti_gcn_linear2_emb=nn.Linear(opt['dim'],opt['embedding_size'])
 
         self.criterion = nn.CrossEntropyLoss(reduce=False)
 
@@ -173,14 +182,15 @@ class CrossModel(nn.Module):
         w2i=json.load(open('word2index_redial.json',encoding='utf-8'))
         self.i2w={w2i[word]:word for word in w2i}
 
+        #---------------------------- still a hack ----------------------------2020/4/22 By Jokie
         self.mask4key=torch.Tensor(np.load('mask4key.npy')).cuda()
         self.mask4movie=torch.Tensor(np.load('mask4movie.npy')).cuda()
-
         # Original mask
         # self.mask4=self.mask4key+self.mask4movie
 
         # tmp hack for runable By Jokie 2021/04/12 for template generation task
         self.mask4=torch.ones(len(dictionary) + 4).cuda()
+
         if is_finetune:
             params = [self.dbpedia_RGCN.parameters(), self.concept_GCN.parameters(),
                       self.concept_embeddings.parameters(),
@@ -245,7 +255,8 @@ class CrossModel(nn.Module):
 
             copy_latent = self.copy_norm(torch.cat([kg_attn_norm.unsqueeze(1), db_attn_norm.unsqueeze(1), scores], -1))
 
-            latents.append(copy_latent)
+            latents.append(scores)
+            # latents.append(copy_latent)
 
             # logits = self.output(latent)
             con_logits = self.representation_bias(copy_latent)*self.mask4.unsqueeze(0).unsqueeze(0)#F.linear(copy_latent, self.embeddings.weight)
@@ -452,8 +463,8 @@ class CrossModel(nn.Module):
         sum_logits = logits+con_logits#*(1-gate)
         _, preds = sum_logits.max(dim=2)
         
-        return logits, preds, copy_latent
-        # return logits, preds, latent
+        # return logits, preds, copy_latent
+        return logits, preds, latent
 
     def infomax_loss(self, con_nodes_features, db_nodes_features, con_user_emb, db_user_emb, con_label, db_label, mask):
         #batch*dim
@@ -545,6 +556,11 @@ class CrossModel(nn.Module):
         #entity_scores = scores_db * gate + scores_con * (1 - gate)
         #entity_scores=(scores_db+scores_con)/2
 
+        # select the topk entity for selection module TODO: By JOkie
+        # topk_ent_probs, topk_ent_ind = torch.topk(entity_scores,k=50, dim=-1) # entity_scores [bsz, n_entities], topk_ent_ind [bsz, n_topk]
+        # movie_embed = self.enti_gcn_linear2_emb(db_nodes_features[topk_ent_ind]) # db_nodes_features[n_entities, enti_dim], movie_embed [bsz, n_topk, embedding_size]
+
+
         #mask loss
         #m_emb=db_nodes_features[labels.cuda()]
         #mask_mask=concept_mask!=self.concept_padding
@@ -600,9 +616,15 @@ class CrossModel(nn.Module):
             #-------------------------------- stage2 movie selection loss-------------- by Jokie
             masked_for_selection_token = (mask_ys == 6)
 
-            selected_token_latent = torch.masked_select(latent, masked_for_selection_token.unsqueeze(-1).expand_as(latent)).view(-1, latent.shape[-1])
-            matching_logits = self.matching_linear(selected_token_latent)
-            # matching_logits = self_attn(selected_token_latent, kg_attention, context(which is encoder_states),) #TODO change for self-attn
+            #WAY1: simply linear
+            # selected_token_latent = torch.masked_select(latent, masked_for_selection_token.unsqueeze(-1).expand_as(latent)).view(-1, latent.shape[-1])
+            # matching_logits = self.matching_linear(selected_token_latent)
+
+            #WAY2: self attn
+            matching_tensor, _ = self.selection_cross_attn_decoder(latent, encoder_states, db_encoding)
+            matching_logits = self.matching_linear(matching_tensor)
+
+            matching_logits = torch.masked_select(matching_logits, masked_for_selection_token.unsqueeze(-1).expand_as(matching_logits)).view(-1, matching_logits.shape[-1])
 
             _, matching_pred = matching_logits.max(dim=-1) # [bsz * dynamic_movie_nums]
             movies_gth = torch.masked_select(movies_gth, (movies_gth!=0))
@@ -649,13 +671,21 @@ class CrossModel(nn.Module):
             preds_for_selection = preds[:, 1:] # skip the start_ind
             masked_for_selection_token = (preds_for_selection == 6)
 
-            # print('latent shape', latent.shape)
-            # print('masked_for_selection_token shape', masked_for_selection_token.shape)
+            
+            #WAY1: simply linear
+            # selected_token_latent = torch.masked_select(latent, masked_for_selection_token.unsqueeze(-1).expand_as(latent)).view(-1, latent.shape[-1])
+            # matching_logits = self.matching_linear(selected_token_latent)
 
-            selected_token_latent = torch.masked_select(latent, masked_for_selection_token.unsqueeze(-1).expand_as(latent)).view(-1, latent.shape[-1])
-            matching_logits = self.matching_linear(selected_token_latent)
+            #WAY2: self attn
+            matching_tensor, _ = self.selection_cross_attn_decoder(latent, encoder_states, db_encoding) #TODO change for self-attn
+            matching_logits = self.matching_linear(matching_tensor)            
 
-            _, matching_pred = matching_logits.max(dim=-1) # [bsz * dynamic_movie_nums]
+            matching_logits = torch.masked_select(matching_logits, masked_for_selection_token.unsqueeze(-1).expand_as(matching_logits)).view(-1, matching_logits.shape[-1])
+
+            if matching_logits.shape[0] is not 0:
+                _, matching_pred = matching_logits.max(dim=-1) # [bsz * dynamic_movie_nums]
+            else:
+                matching_pred = None
             # print('matching_pred', matching_pred.shape)
             #---------------------------------------------Greedy decode(end)-------------------------------------------
 
