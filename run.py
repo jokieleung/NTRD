@@ -61,6 +61,7 @@ def setup_args():
     train.add_argument("-max_count","--max_count",type=int,default=5)
     train.add_argument("-use_cuda","--use_cuda",type=bool,default=True)
     train.add_argument("-is_template","--is_template",type=bool,default=True)
+    train.add_argument("-infomax_pretrain","--infomax_pretrain",type=bool,default=False)
     train.add_argument("-load_dict","--load_dict",type=str,default=None)
     train.add_argument("-learningrate","--learningrate",type=float,default=1e-3)
     train.add_argument("-optimizer","--optimizer",type=str,default='adam')
@@ -117,6 +118,7 @@ class TrainLoop_fusion_rec():
 
         self.batch_size=self.opt['batch_size']
         self.epoch=self.opt['epoch']
+        self.infomax_pretrain=self.opt['infomax_pretrain']
 
         self.use_cuda=opt['use_cuda']
         if opt['load_dict']!=None:
@@ -160,37 +162,38 @@ class TrainLoop_fusion_rec():
         losses=[]
         best_val_rec=0
         rec_stop=False
-        for i in range(3):
-            train_set=CRSdataset(self.train_dataset.data_process(),self.opt['n_entity'],self.opt['n_concept'])
-            train_dataset_loader = torch.utils.data.DataLoader(dataset=train_set,
-                                                            batch_size=self.batch_size,
-                                                            shuffle=False)
-            num=0
-            for context,c_lengths,response,r_length,mask_response,mask_r_length,entity,entity_vector,movie,concept_mask,dbpedia_mask,concept_vec, db_vec,rec,movies_gth,movie_nums in tqdm(train_dataset_loader):
-                seed_sets = []
-                batch_size = context.shape[0]
-                for b in range(batch_size):
-                    seed_set = entity[b].nonzero().view(-1).tolist()
-                    seed_sets.append(seed_set)
-                self.model.train()
-                self.zero_grad()
+        if self.infomax_pretrain:
+            for i in range(3):
+                train_set=CRSdataset(self.train_dataset.data_process(),self.opt['n_entity'],self.opt['n_concept'])
+                train_dataset_loader = torch.utils.data.DataLoader(dataset=train_set,
+                                                                batch_size=self.batch_size,
+                                                                shuffle=False)
+                num=0
+                for context,c_lengths,response,r_length,mask_response,mask_r_length,entity,entity_vector,movie,concept_mask,dbpedia_mask,concept_vec, db_vec,rec,movies_gth,movie_nums in tqdm(train_dataset_loader):
+                    seed_sets = []
+                    batch_size = context.shape[0]
+                    for b in range(batch_size):
+                        seed_set = entity[b].nonzero().view(-1).tolist()
+                        seed_sets.append(seed_set)
+                    self.model.train()
+                    self.zero_grad()
 
-                scores, preds, rec_scores, rec_loss, gen_loss, mask_loss, info_db_loss, _, selection_loss, matching_pred=self.model(context.cuda(), response.cuda(), mask_response.cuda(),
-                                                                                                                            concept_mask, dbpedia_mask, seed_sets, movie, concept_vec, db_vec, entity_vector.cuda(), rec, movies_gth.cuda(),movie_nums,test=False)
+                    scores, preds, rec_scores, rec_loss, gen_loss, mask_loss, info_db_loss, _, selection_loss, matching_pred=self.model(context.cuda(), response.cuda(), mask_response.cuda(),
+                                                                                                                                concept_mask, dbpedia_mask, seed_sets, movie, concept_vec, db_vec, entity_vector.cuda(), rec, movies_gth.cuda(),movie_nums,test=False)
 
-                joint_loss=info_db_loss#+info_con_loss
+                    joint_loss=info_db_loss#+info_con_loss
 
-                losses.append([info_db_loss])
-                self.backward(joint_loss)
-                self.update_params()
-                if num%50==0:
-                    print('info db loss is %f'%(sum([l[0] for l in losses])/len(losses)))
-                    #print('info con loss is %f'%(sum([l[1] for l in losses])/len(losses)))
-                    losses=[]
-                num+=1
+                    losses.append([info_db_loss])
+                    self.backward(joint_loss)
+                    self.update_params()
+                    if num%50==0:
+                        print('info db loss is %f'%(sum([l[0] for l in losses])/len(losses)))
+                        #print('info con loss is %f'%(sum([l[1] for l in losses])/len(losses)))
+                        losses=[]
+                    num+=1
 
-        print("masked loss pre-trained")
-        losses=[]
+            print("masked loss pre-trained")
+            losses=[]
 
         for i in range(self.epoch):
             train_set=CRSdataset(self.train_dataset.data_process(),self.opt['n_entity'],self.opt['n_concept'])
@@ -226,7 +229,7 @@ class TrainLoop_fusion_rec():
                 rec_stop=True
             else:
                 best_val_rec = output_metrics_rec["recall@50"]+output_metrics_rec["recall@1"]
-                self.model.save_model()
+                self.model.save_model(model_name= self.opt['save_exp_name'] + '_best.pkl')
                 print("recommendation model saved once------------------------------------------------")
 
             if rec_stop==True:
@@ -816,7 +819,7 @@ if __name__ == '__main__':
     print(vars(args))
     if args.is_finetune==False:
         loop=TrainLoop_fusion_rec(vars(args),is_finetune=False)
-        #loop.model.load_model()
+        # loop.model.load_model()
         loop.train()
     else:
         loop=TrainLoop_fusion_gen(vars(args),is_finetune=True)

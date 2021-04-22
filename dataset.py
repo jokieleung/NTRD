@@ -21,6 +21,7 @@ class dataset(object):
     def __init__(self,filename,opt):
         self.entity2entityId=pkl.load(open('data/entity2entityId.pkl','rb'))
         self.movieID2selection_label=pkl.load(open('movieID2selection_label.pkl','rb'))
+        self.selection_label2movieID={self.movieID2selection_label[key]:key for key in self.movieID2selection_label}
         self.entity_max=len(self.entity2entityId)
 
         self.id2entity=pkl.load(open('data/id2entity.pkl','rb'))
@@ -82,6 +83,8 @@ class dataset(object):
         vector=[]
         concept_mask=[]
         dbpedia_mask=[]
+
+        cur_movie = 0
         for word in sentence:
             vector.append(self.word2index.get(word,unk))
             #if word.lower() not in self.stopwords:
@@ -102,9 +105,17 @@ class dataset(object):
             
             if MOVIE_TOKEN in word:
             # if is_response and MOVIE_TOKEN in word:
-                dbpedia_mask.append(1)
+                try:
+                    cur_movie_id = self.selection_label2movieID[movies_gth[cur_movie]]
+                    entity = self.id2entity[int(cur_movie_id)]
+                    id=self.entity2entityId[entity]
+                except:
+                    id=self.entity_max
+                dbpedia_mask.append(id)
             else:
-                dbpedia_mask.append(0)
+                dbpedia_mask.append(self.entity_max)
+
+
         vector.append(end)
         concept_mask.append(0)
         # dbpedia_mask.append(self.entity_max)
@@ -193,9 +204,9 @@ class dataset(object):
 
             
 
-            # context,c_lengths,concept_mask,dbpedia_mask,_=self.padding_context(line['contexts'])
-            context,c_lengths,concept_mask,dbpedia_mask_context,_=self.padding_context(line['contexts'])
-            response,r_length,_,dbpedia_mask,movies_gth=self.padding_w2v(line['response'],self.max_r_length,transformer=True,is_response=True,movies_gth=line['all_movies'])
+            context,c_lengths,concept_mask,dbpedia_mask,_=self.padding_context(line['contexts'])
+            # context,c_lengths,concept_mask,dbpedia_mask_context,_=self.padding_context(line['contexts'])
+            response,r_length,_,_,movies_gth=self.padding_w2v(line['response'],self.max_r_length,transformer=True,is_response=True,movies_gth=line['all_movies'])
             
             #padding all_movies 
             movies_gth, movies_num = self.padding_all_movies(movies_gth,self.max_r_length)
@@ -207,8 +218,8 @@ class dataset(object):
                 mask_response, mask_r_length=response,r_length
             assert len(context)==self.max_c_length
             assert len(concept_mask)==self.max_c_length
-            # assert len(dbpedia_mask)==self.max_c_length
-            assert len(dbpedia_mask)==self.max_c_length or len(dbpedia_mask)==self.max_r_length
+            assert len(dbpedia_mask)==self.max_c_length
+            # assert len(dbpedia_mask)==self.max_c_length or len(dbpedia_mask)==self.max_r_length
 
             data_set.append([np.array(context),c_lengths,np.array(response),r_length,np.array(mask_response),mask_r_length,line['entity'],
                              line['movie'],concept_mask,dbpedia_mask,line['rec'], np.array(movies_gth), movies_num])
