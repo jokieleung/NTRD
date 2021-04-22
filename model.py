@@ -76,6 +76,7 @@ class CrossModel(nn.Module):
         self.batch_size = opt['batch_size']
         self.max_r_length = opt['max_r_length']
         self.beam = opt['beam']
+        self.is_finetune = is_finetune
 
         self.index2word={dictionary[key]:key for key in dictionary}
 
@@ -576,123 +577,127 @@ class CrossModel(nn.Module):
 
         self.user_rep=user_emb
 
-        #generation---------------------------------------------------------------------------------------------------
-        encoder_states = prev_enc if prev_enc is not None else self.encoder(xs)
-        con_nodes_features4gen=con_nodes_features#self.concept_GCN4gen(con_nodes_features,self.concept_edge_sets)
-        con_emb4gen = con_nodes_features4gen[concept_mask]
-        con_mask4gen = concept_mask != self.concept_padding
-        #kg_encoding=self.kg_encoder(con_emb4gen.cuda(),con_mask4gen.cuda())
-        kg_encoding=(self.kg_norm(con_emb4gen),con_mask4gen.cuda())
+        if self.is_finetune:
+            #generation---------------------------------------------------------------------------------------------------
+            encoder_states = prev_enc if prev_enc is not None else self.encoder(xs)
+            con_nodes_features4gen=con_nodes_features#self.concept_GCN4gen(con_nodes_features,self.concept_edge_sets)
+            con_emb4gen = con_nodes_features4gen[concept_mask]
+            con_mask4gen = concept_mask != self.concept_padding
+            #kg_encoding=self.kg_encoder(con_emb4gen.cuda(),con_mask4gen.cuda())
+            kg_encoding=(self.kg_norm(con_emb4gen),con_mask4gen.cuda())
 
-        db_emb4gen=db_nodes_features[entity_vector] #batch*50*dim
-        db_mask4gen=entity_vector!=0
-        #db_encoding=self.db_encoder(db_emb4gen.cuda(),db_mask4gen.cuda())
-        db_encoding=(self.db_norm(db_emb4gen),db_mask4gen.cuda())
+            db_emb4gen=db_nodes_features[entity_vector] #batch*50*dim
+            db_mask4gen=entity_vector!=0
+            #db_encoding=self.db_encoder(db_emb4gen.cuda(),db_mask4gen.cuda())
+            db_encoding=(self.db_norm(db_emb4gen),db_mask4gen.cuda())
 
-        if test == False:
-            # use teacher forcing  scores, pred: (FloatTensor[bsz, ys, vocab], LongTensor[bsz, ys])
-            # print('shape of entity_scores', entity_scores.shape)
-            # print('shape of rec label', labels.shape)
-            # print('rec label', labels)
-            # print('shape of movie label', movies_gth.shape)
-            movies_gth = movies_gth * (movies_gth!=-1)
+            if test == False:
+                # use teacher forcing  scores, pred: (FloatTensor[bsz, ys, vocab], LongTensor[bsz, ys])
+                # print('shape of entity_scores', entity_scores.shape)
+                # print('shape of rec label', labels.shape)
+                # print('rec label', labels)
+                # print('shape of movie label', movies_gth.shape)
+                movies_gth = movies_gth * (movies_gth!=-1)
 
-            # print('shape of movies_gth', torch.sum(movies_gth!=0, dim=(0,1)))
-            # print('shape of gth masked hole num', torch.sum((mask_ys == 6), dim=(0,1)))
-            # print('movie_nums', movie_nums)
-            # print('__MOVIE__ position ', torch.sum((mask_ys == 6), dim=(1)))
-            assert torch.sum(movies_gth!=0, dim=(0,1)) == torch.sum((mask_ys == 6), dim=(0,1))
+                # print('shape of movies_gth', torch.sum(movies_gth!=0, dim=(0,1)))
+                # print('shape of gth masked hole num', torch.sum((mask_ys == 6), dim=(0,1)))
+                # print('movie_nums', movie_nums)
+                # print('__MOVIE__ position ', torch.sum((mask_ys == 6), dim=(1)))
+                assert torch.sum(movies_gth!=0, dim=(0,1)) == torch.sum((mask_ys == 6), dim=(0,1))
 
-            # cant run case : case 1 : [-15] case2: [-8] By Jokie tmp 2021/4/14
-            # print(movies_gth[-15])
-            # print(mask_ys[-15])
-            # print(self.vector2sentence(mask_ys.cpu())[-15])
+                # cant run case : case 1 : [-15] case2: [-8] By Jokie tmp 2021/4/14
+                # print(movies_gth[-15])
+                # print(mask_ys[-15])
+                # print(self.vector2sentence(mask_ys.cpu())[-15])
 
-            # print('shape of encoder_states,kg_encoding,db_encoding,con_user_emb, db_user_emb, mask_ys', encoder_states[0].shape,kg_encoding[0].shape,db_encoding[0].shape,con_user_emb.shape, db_user_emb.shape, mask_ys.shape)
-            scores, preds, latent = self.decode_forced(encoder_states, kg_encoding, db_encoding, con_user_emb, db_user_emb, mask_ys)
-            # print('shape of scores,preds, mask_ys, latent', scores.shape,preds.shape,mask_ys.shape,latent.shape)
-            gen_loss = torch.mean(self.compute_loss(scores, mask_ys))
+                # print('shape of encoder_states,kg_encoding,db_encoding,con_user_emb, db_user_emb, mask_ys', encoder_states[0].shape,kg_encoding[0].shape,db_encoding[0].shape,con_user_emb.shape, db_user_emb.shape, mask_ys.shape)
+                scores, preds, latent = self.decode_forced(encoder_states, kg_encoding, db_encoding, con_user_emb, db_user_emb, mask_ys)
+                # print('shape of scores,preds, mask_ys, latent', scores.shape,preds.shape,mask_ys.shape,latent.shape)
+                gen_loss = torch.mean(self.compute_loss(scores, mask_ys))
 
-            #-------------------------------- stage2 movie selection loss-------------- by Jokie
-            masked_for_selection_token = (mask_ys == 6)
+                #-------------------------------- stage2 movie selection loss-------------- by Jokie
+                masked_for_selection_token = (mask_ys == 6)
 
-            #WAY1: simply linear
-            # selected_token_latent = torch.masked_select(latent, masked_for_selection_token.unsqueeze(-1).expand_as(latent)).view(-1, latent.shape[-1])
-            # matching_logits = self.matching_linear(selected_token_latent)
+                #WAY1: simply linear
+                # selected_token_latent = torch.masked_select(latent, masked_for_selection_token.unsqueeze(-1).expand_as(latent)).view(-1, latent.shape[-1])
+                # matching_logits = self.matching_linear(selected_token_latent)
 
-            #WAY2: self attn
-            matching_tensor, _ = self.selection_cross_attn_decoder(latent, encoder_states, db_encoding)
-            matching_logits = self.matching_linear(matching_tensor)
+                #WAY2: self attn
+                matching_tensor, _ = self.selection_cross_attn_decoder(latent, encoder_states, db_encoding)
+                matching_logits = self.matching_linear(matching_tensor)
 
-            matching_logits = torch.masked_select(matching_logits, masked_for_selection_token.unsqueeze(-1).expand_as(matching_logits)).view(-1, matching_logits.shape[-1])
+                matching_logits = torch.masked_select(matching_logits, masked_for_selection_token.unsqueeze(-1).expand_as(matching_logits)).view(-1, matching_logits.shape[-1])
 
-            _, matching_pred = matching_logits.max(dim=-1) # [bsz * dynamic_movie_nums]
-            movies_gth = torch.masked_select(movies_gth, (movies_gth!=0))
-            selection_loss = torch.mean(self.compute_loss(matching_logits, movies_gth)) # movies_gth.squeeze(0):[bsz * dynamic_movie_nums]
-            # print('shape of selected_token_latent', selected_token_latent.shape)
-            # print('selection_loss', selection_loss)
-            
-
-            
-        else:
-            #---------------------------------------------Beam Search decode----------------------------------------
-            # scores, preds, latent = self.decode_beam_search_with_kg(
-            #     encoder_states, kg_encoding, db_encoding, con_user_emb, db_user_emb,
-            #     maxlen, self.beam)
-            # # #pred here is soft template prediction
-            # # # --------------post process the prediction to full sentence
-            # # #-------------------------------- stage2 movie selection loss-------------- by Jokie
-            # preds_for_selection = preds[:, 1:] # skip the start_ind
-            # # preds_for_selection = preds[:, 2:] # skip the start_ind
-            # masked_for_selection_token = (preds_for_selection == 6)
-
-            # # print('latent shape', latent.shape)
-            # # print('preds_for_selection: ', preds_for_selection)
-            # # print('masked_for_selection_token shape', masked_for_selection_token.shape)
-
-            # selected_token_latent = torch.masked_select(latent, masked_for_selection_token.unsqueeze(-1).expand_as(latent)).view(-1, latent.shape[-1])
-            # print('selected_token_latent shape: ' , selected_token_latent)
-            # matching_logits = self.matching_linear(selected_token_latent)
-
-            # _, matching_pred = matching_logits.max(dim=-1) # [bsz * dynamic_movie_nums]
-            # # print('matching_pred', matching_pred.shape)
-
-
-            #---------------------------------------------Greedy decode-------------------------------------------
-            scores, preds, latent = self.decode_greedy(
-                encoder_states, kg_encoding, db_encoding, con_user_emb, db_user_emb,
-                bsz,
-                maxlen or self.longest_label
-            )
-
-            # #pred here is soft template prediction
-            # # --------------post process the prediction to full sentence
-            # #-------------------------------- stage2 movie selection loss-------------- by Jokie
-            preds_for_selection = preds[:, 1:] # skip the start_ind
-            masked_for_selection_token = (preds_for_selection == 6)
-
-            
-            #WAY1: simply linear
-            # selected_token_latent = torch.masked_select(latent, masked_for_selection_token.unsqueeze(-1).expand_as(latent)).view(-1, latent.shape[-1])
-            # matching_logits = self.matching_linear(selected_token_latent)
-
-            #WAY2: self attn
-            matching_tensor, _ = self.selection_cross_attn_decoder(latent, encoder_states, db_encoding) #TODO change for self-attn
-            matching_logits = self.matching_linear(matching_tensor)            
-
-            matching_logits = torch.masked_select(matching_logits, masked_for_selection_token.unsqueeze(-1).expand_as(matching_logits)).view(-1, matching_logits.shape[-1])
-
-            if matching_logits.shape[0] is not 0:
                 _, matching_pred = matching_logits.max(dim=-1) # [bsz * dynamic_movie_nums]
+                movies_gth = torch.masked_select(movies_gth, (movies_gth!=0))
+                selection_loss = torch.mean(self.compute_loss(matching_logits, movies_gth)) # movies_gth.squeeze(0):[bsz * dynamic_movie_nums]
+                # print('shape of selected_token_latent', selected_token_latent.shape)
+                # print('selection_loss', selection_loss)
+                
+
+                
             else:
-                matching_pred = None
-            # print('matching_pred', matching_pred.shape)
-            #---------------------------------------------Greedy decode(end)-------------------------------------------
+                #---------------------------------------------Beam Search decode----------------------------------------
+                # scores, preds, latent = self.decode_beam_search_with_kg(
+                #     encoder_states, kg_encoding, db_encoding, con_user_emb, db_user_emb,
+                #     maxlen, self.beam)
+                # # #pred here is soft template prediction
+                # # # --------------post process the prediction to full sentence
+                # # #-------------------------------- stage2 movie selection loss-------------- by Jokie
+                # preds_for_selection = preds[:, 1:] # skip the start_ind
+                # # preds_for_selection = preds[:, 2:] # skip the start_ind
+                # masked_for_selection_token = (preds_for_selection == 6)
 
-            gen_loss = None
-            selection_loss = None
+                # # print('latent shape', latent.shape)
+                # # print('preds_for_selection: ', preds_for_selection)
+                # # print('masked_for_selection_token shape', masked_for_selection_token.shape)
 
-        return scores, preds, entity_scores, rec_loss, gen_loss, mask_loss, info_db_loss, info_con_loss, selection_loss, matching_pred
+                # selected_token_latent = torch.masked_select(latent, masked_for_selection_token.unsqueeze(-1).expand_as(latent)).view(-1, latent.shape[-1])
+                # print('selected_token_latent shape: ' , selected_token_latent)
+                # matching_logits = self.matching_linear(selected_token_latent)
+
+                # _, matching_pred = matching_logits.max(dim=-1) # [bsz * dynamic_movie_nums]
+                # # print('matching_pred', matching_pred.shape)
+
+
+                #---------------------------------------------Greedy decode-------------------------------------------
+                scores, preds, latent = self.decode_greedy(
+                    encoder_states, kg_encoding, db_encoding, con_user_emb, db_user_emb,
+                    bsz,
+                    maxlen or self.longest_label
+                )
+
+                # #pred here is soft template prediction
+                # # --------------post process the prediction to full sentence
+                # #-------------------------------- stage2 movie selection loss-------------- by Jokie
+                preds_for_selection = preds[:, 1:] # skip the start_ind
+                masked_for_selection_token = (preds_for_selection == 6)
+
+                
+                #WAY1: simply linear
+                # selected_token_latent = torch.masked_select(latent, masked_for_selection_token.unsqueeze(-1).expand_as(latent)).view(-1, latent.shape[-1])
+                # matching_logits = self.matching_linear(selected_token_latent)
+
+                #WAY2: self attn
+                matching_tensor, _ = self.selection_cross_attn_decoder(latent, encoder_states, db_encoding) #TODO change for self-attn
+                matching_logits = self.matching_linear(matching_tensor)            
+
+                matching_logits = torch.masked_select(matching_logits, masked_for_selection_token.unsqueeze(-1).expand_as(matching_logits)).view(-1, matching_logits.shape[-1])
+
+                if matching_logits.shape[0] is not 0:
+                    _, matching_pred = matching_logits.max(dim=-1) # [bsz * dynamic_movie_nums]
+                else:
+                    matching_pred = None
+                # print('matching_pred', matching_pred.shape)
+                #---------------------------------------------Greedy decode(end)-------------------------------------------
+
+                gen_loss = None
+                selection_loss = None
+
+            return scores, preds, entity_scores, rec_loss, gen_loss, mask_loss, info_db_loss, info_con_loss, selection_loss, matching_pred
+
+        else:
+            return None, None, None, rec_loss, None, None, info_db_loss, info_con_loss, None, None
 
     def reorder_encoder_states(self, encoder_states, indices):
         """
