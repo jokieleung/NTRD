@@ -26,8 +26,8 @@ Examples
 import numpy as np
 from tqdm import tqdm
 from math import exp
-# import os
-# os.environ['CUDA_VISIBLE_DEVICES']='1'
+import os
+os.environ['CUDA_VISIBLE_DEVICES']='3'
 import signal
 import json
 import argparse
@@ -45,6 +45,8 @@ except ImportError:
     TORCH_AVAILABLE = False
 from nltk.translate.bleu_score import sentence_bleu
 
+TOTAL_NOVEL_MOVIES = [190468, 131077, 167942, 96274, 86045, 176159, 194600, 143404, 127029, 120886, 84028, 194621, 147538, 178258, 116824, 139354, 129114, 112735, 157810, 168050, 129144, 77946, 139391, 92288, 112779, 139411, 151700, 176293, 108725, 157878, 153792, 188619, 198861, 88275, 129239, 162022, 149737, 178413, 137465, 78076, 80131, 172293, 96519, 141576, 127243, 184595, 119062, 178456, 92441, 174394, 100667, 151866, 137533, 88393, 194891, 115021, 143696, 102747, 180575, 102761, 201070, 117103,133489, 141688, 162174, 180620, 160163, 194987, 137649, 151987, 174517, 201143, 108986, 119227, 111041, 94659, 117188, 168388, 137669, 104901, 184782, 135634, 100821, 90582, 174560, 190948, 76279, 137726, 145926, 139786, 160266, 127508, 150037, 127514, 92704, 203301, 170540, 76336, 125499, 100924, 135743, 152127, 82497, 197186, 117315, 125515, 170576, 84571, 189020, 141917, 125540, 78436, 82536, 121453, 168568, 182905, 88703, 137861, 121484, 90768, 178835, 201368, 178852, 203437, 135858, 150197, 127674, 139964, 195261, 123583, 201415, 137927, 115404, 96973, 154329, 185051, 131811, 137955, 185065, 92911, 94963, 144116, 146166, 187147, 127759, 203543, 146199, 133916, 174881, 135973, 174889, 80683, 144178, 164666, 138042, 125767, 76620, 93005, 78673, 179035, 90975, 174953, 123754, 95083, 86889, 189294, 191342, 191347, 129907, 105334, 82808, 109435, 78719, 172934, 95110, 144263, 187280, 127901, 89005, 76724, 97209, 105403, 82876, 123837, 125893, 179153, 91089, 168913, 105428, 115669, 107477, 91095, 101335, 95205, 103400, 134132, 171000, 183293, 109568, 87048, 85003, 105486, 160791, 87064, 107548, 132127, 205858, 181284, 128044, 156724, 162873, 169027, 195667, 95321, 85082, 154716, 78943, 101479, 101483, 173169, 169090, 201860, 76935, 142484, 193710, 191672, 185529, 195773, 206020, 206021, 206022, 181447, 206026, 206029, 179407, 206032, 206035, 173267, 85204, 160981, 206044, 206045, 206056, 199917, 206062, 206064, 201971, 199930, 206076, 206079, 206080, 156931, 206087, 206092, 138525, 105764, 148780, 85298, 152883, 177468, 159039, 171338, 144716, 109911, 154968, 191834, 169313, 109931, 99694, 163184, 114034, 200078, 157074, 97683, 152993, 200103, 91563, 105916, 91583, 105923, 144842, 95692, 142800, 148947, 126421, 120281, 105952, 128487, 120297, 83436, 87541, 157174, 196085, 77306, 105979, 140796, 146948, 124433, 165396, 140823, 130589, 124449, 95780, 128548, 196132, 165416, 124457, 95785, 126520, 81469, 81474, 89669, 114256, 181859, 165499, 151167, 179845, 175751, 85648, 186002, 157333, 79512, 151198, 81568, 102067, 169662, 181960, 136912, 77521, 106197, 194285, 102147, 190214, 145161, 198411, 110352, 114453, 169750, 114458, 194336, 186145, 151341, 112434, 141107, 165683, 104248, 139076, 79689, 173899, 110419, 128862, 188260, 161638, 153450, 81775, 116593, 188293, 141191, 178056, 145291, 118669, 200590, 180131, 106404, 110510, 139199, 92098, 96197, 98259, 161756, 124895, 159718, 114669]
+
 def is_distributed():
     """
     Returns True if we are in distributed mode.
@@ -57,7 +59,7 @@ def setup_args():
     train.add_argument("-max_r_length","--max_r_length",type=int,default=30)
     train.add_argument("-beam","--beam",type=int,default=1)
     # train.add_argument("-max_r_length","--max_r_length",type=int,default=256)
-    train.add_argument("-batch_size","--batch_size",type=int,default=128)
+    train.add_argument("-batch_size","--batch_size",type=int,default=32)
     train.add_argument("-max_count","--max_count",type=int,default=5)
     train.add_argument("-use_cuda","--use_cuda",type=bool,default=True)
     train.add_argument("-is_template","--is_template",type=bool,default=True)
@@ -68,10 +70,14 @@ def setup_args():
     train.add_argument("-momentum","--momentum",type=float,default=0)
     train.add_argument("-is_finetune","--is_finetune",type=bool,default=False)
     train.add_argument("-embedding_type","--embedding_type",type=str,default='random')
-    train.add_argument("-save_exp_name","--save_exp_name",type=str,default='saved_model/sattn_dialog_model')
+    train.add_argument("-save_exp_name","--save_exp_name",type=str,default='saved_model/new_model')
+    # train.add_argument("-saved_hypo_txt","--saved_hypo_txt",type=str,default='case_file/output_hypo_latest.txt')
+    train.add_argument("-saved_hypo_txt","--saved_hypo_txt",type=str,default=None)
+    train.add_argument("-load_model_pth","--load_model_pth",type=str,default='saved_model/net_parameter1.pkl')
     train.add_argument("-epoch","--epoch",type=int,default=30)
     train.add_argument("-gpu","--gpu",type=str,default='2')
     train.add_argument("-gradient_clip","--gradient_clip",type=float,default=0.1)
+    train.add_argument("-gen_loss_weight","--gen_loss_weight",type=float,default=5)
     train.add_argument("-embedding_size","--embedding_size",type=int,default=300)
 
     train.add_argument("-n_heads","--n_heads",type=int,default=2)
@@ -108,7 +114,8 @@ def setup_args():
 class TrainLoop_fusion_rec():
     def __init__(self, opt, is_finetune):
         self.opt=opt
-        self.train_dataset=dataset('data/train_data.jsonl',opt)
+        self.train_dataset=dataset('data/full_data.jsonl',opt)
+        # self.train_dataset=dataset('data/train_data.jsonl',opt)
 
         self.dict=self.train_dataset.word2index
         self.index2word={self.dict[key]:key for key in self.dict}
@@ -229,7 +236,7 @@ class TrainLoop_fusion_rec():
                 rec_stop=True
             else:
                 best_val_rec = output_metrics_rec["recall@50"]+output_metrics_rec["recall@1"]
-                self.model.save_model(model_name= self.opt['save_exp_name'] + '_best.pkl')
+                self.model.save_model(model_name= self.opt['save_exp_name'] + '_best_recom_model.pkl')
                 print("recommendation model saved once------------------------------------------------")
 
             if rec_stop==True:
@@ -280,6 +287,7 @@ class TrainLoop_fusion_rec():
             self.metrics_cal_rec(rec_loss, rec_scores, movie)
 
         output_dict_rec={key: self.metrics_rec[key] / self.metrics_rec['count'] for key in self.metrics_rec}
+        output_dict_rec['count'] = self.metrics_rec['count']
         print(output_dict_rec)
 
         return output_dict_rec
@@ -392,6 +400,8 @@ class TrainLoop_fusion_gen():
         self.selection_label2movieID={self.movieID2selection_label[key]:key for key in self.movieID2selection_label}
         self.id2entity=pkl.load(open('data/id2entity.pkl','rb'))
 
+        self.total_novel_movies = TOTAL_NOVEL_MOVIES
+
         self.batch_size=self.opt['batch_size']
         self.epoch=self.opt['epoch']
 
@@ -409,7 +419,7 @@ class TrainLoop_fusion_gen():
         # should correctly initialize to floats or ints here
 
         self.metrics_rec={"recall@1":0,"recall@10":0,"recall@50":0,"loss":0,"count":0}
-        self.metrics_gen={"dist1":0,"dist2":0,"dist3":0,"dist4":0,"bleu1":0,"bleu2":0,"bleu3":0,"bleu4":0,"count":0, "true_recall_movie_count":0, "res_movie_recall":0.0}
+        self.metrics_gen={"dist1":0,"dist2":0,"dist3":0,"dist4":0,"bleu1":0,"bleu2":0,"bleu3":0,"bleu4":0,"count":0, "true_recall_movie_count":0, "res_movie_recall":0.0,"recall@1":0,"recall@10":0,"recall@50":0}
 
         self.build_model(is_finetune=True)
 
@@ -438,6 +448,7 @@ class TrainLoop_fusion_gen():
         # self.model.load_model()
         losses=[]
         best_val_gen=0
+        best_val_rec=0
         gen_stop=False
         for i in range(self.epoch*3):
             train_set=CRSdataset(self.train_dataset.data_process(True),self.opt['n_entity'],self.opt['n_concept'])
@@ -454,9 +465,10 @@ class TrainLoop_fusion_gen():
                 self.model.train()
                 self.zero_grad()
 
-                scores, preds, rec_scores, rec_loss, gen_loss, mask_loss, info_db_loss, info_con_loss, selection_loss, matching_pred=self.model(context.cuda(), response.cuda(), mask_response.cuda(), concept_mask, dbpedia_mask, seed_sets, movie, concept_vec, db_vec, entity_vector.cuda(), rec,movies_gth.cuda(),movie_nums, test=False)
+                scores, preds, rec_scores, rec_loss, gen_loss, mask_loss, info_db_loss, info_con_loss, selection_loss, matching_pred,matching_scores=self.model(context.cuda(), response.cuda(), mask_response.cuda(), concept_mask, dbpedia_mask, seed_sets, movie, concept_vec, db_vec, entity_vector.cuda(), rec,movies_gth.cuda(),movie_nums, test=False)
 
-                joint_loss=gen_loss + selection_loss
+                gen_loss = self.opt['gen_loss_weight'] * gen_loss
+                joint_loss= gen_loss + selection_loss
 
                 losses.append([gen_loss, selection_loss])
                 self.backward(joint_loss)
@@ -472,20 +484,32 @@ class TrainLoop_fusion_gen():
                 pass
             else:
                 best_val_gen = output_metrics_gen["dist4"]
-                self.model.save_model(model_name= self.opt['save_exp_name'] + '_best.pkl')
-                print("generator model saved once------------------------------------------------")
-                print("best dist4 is :", best_val_gen)
+                self.model.save_model(model_name= self.opt['save_exp_name'] + '_best_dist4.pkl')
+                print("Best Dist4 generator model saved once------------------------------------------------")
+            print("best dist4 is :", best_val_gen)
 
-            if i % 5 ==0: # save each 5 epoch
-                model_name = self.opt['save_exp_name'] + '_' + str(i) + '.pkl'
-                self.model.save_model(model_name=model_name)
-                print("generator model saved once------------------------------------------------")
-                print('cur selection_loss is %f'%(sum([l[1] for l in losses])/len(losses)))
+            if best_val_rec > output_metrics_gen["recall@50"] + output_metrics_gen["recall@1"]:
+                pass
+            else:
+                best_val_rec = output_metrics_gen["recall@50"] + output_metrics_gen["recall@1"]
+                self.model.save_model(model_name= self.opt['save_exp_name'] + '_best_Rec.pkl')
+                print("Best Recall generator model saved once------------------------------------------------")
+            print("best res_movie_R@1 is :", output_metrics_gen["recall@1"])
+            print("best res_movie_R@10 is :", output_metrics_gen["recall@10"])
+            print("best res_movie_R@50 is :", output_metrics_gen["recall@50"])
+            print('cur selection_loss is %f'%(sum([l[1] for l in losses])/len(losses)))
+            print('cur Epoch is : ', i)
+            
+            # if i % 5 ==0: # save each 5 epoch
+            #     model_name = self.opt['save_exp_name'] + '_' + str(i) + '.pkl'
+            #     self.model.save_model(model_name=model_name)
+            #     print("generator model saved once------------------------------------------------")
+            #     print('cur selection_loss is %f'%(sum([l[1] for l in losses])/len(losses)))
 
         _=self.val(is_test=True)
 
     def val(self,is_test=False):
-        self.metrics_gen={"ppl":0,"dist1":0,"dist2":0,"dist3":0,"dist4":0,"bleu1":0,"bleu2":0,"bleu3":0,"bleu4":0,"count":0,"true_recall_movie_count":0, "res_movie_recall":0.0}
+        self.metrics_gen={"ppl":0,"dist1":0,"dist2":0,"dist3":0,"dist4":0,"bleu1":0,"bleu2":0,"bleu3":0,"bleu4":0,"count":0,"true_recall_movie_count":0, "res_movie_recall":0.0,"recall@1":0,"recall@10":0,"recall@50":0}
         self.metrics_rec={"recall@1":0,"recall@10":0,"recall@50":0,"loss":0,"gate":0,"count":0,'gate_count':0}
         self.model.eval()
         if is_test:
@@ -510,12 +534,14 @@ class TrainLoop_fusion_gen():
                     seed_sets.append(seed_set)
 
                 #-----dump , run the first time only to get the gen_loss, could be optimized here ------By Jokie 2021/04/15
-                _, _, _, _, gen_loss, mask_loss, info_db_loss, info_con_loss, selection_loss, _ = self.model(context.cuda(), response.cuda(), mask_response.cuda(), concept_mask, dbpedia_mask, seed_sets, movie, concept_vec, db_vec, entity_vector.cuda(), rec,movies_gth.cuda(),movie_nums, test=False)
-                scores, preds, rec_scores, rec_loss, _, mask_loss, info_db_loss, info_con_loss, selection_loss, matching_pred = self.model(context.cuda(), response.cuda(), mask_response.cuda(), concept_mask, dbpedia_mask, seed_sets, movie, concept_vec, db_vec, entity_vector.cuda(), rec,movies_gth.cuda(),movie_nums,test=True, maxlen=20, bsz=batch_size)
+                _, _, _, _, gen_loss, mask_loss, info_db_loss, info_con_loss, selection_loss, _, _ = self.model(context.cuda(), response.cuda(), mask_response.cuda(), concept_mask, dbpedia_mask, seed_sets, movie, concept_vec, db_vec, entity_vector.cuda(), rec,movies_gth.cuda(),movie_nums, test=False)
+                scores, preds, rec_scores, rec_loss, _, mask_loss, info_db_loss, info_con_loss, selection_loss, matching_pred, matching_scores = self.model(context.cuda(), response.cuda(), mask_response.cuda(), concept_mask, dbpedia_mask, seed_sets, movie, concept_vec, db_vec, entity_vector.cuda(), rec,movies_gth.cuda(),movie_nums,test=True, maxlen=20, bsz=batch_size)
 
             # golden_sum.extend(self.vector2sentence(response.cpu()))
             # inference_sum.extend(self.vector2sentence(preds.cpu()))
             # context_sum.extend(self.vector2sentence(context.cpu()))
+                
+                self.all_response_movie_recall_cal(preds.cpu(), matching_scores.cpu(),movies_gth.cpu())
 
             #-----------template pro-process gth response and prediction--------------------
             if self.is_template:
@@ -550,9 +576,14 @@ class TrainLoop_fusion_gen():
         # f.writelines([' '.join(sen)+'\n' for sen in context_sum])
         # f.close()
 
-        f=open('output_self_attn_no_decode_first_filled_template_test.txt','w',encoding='utf-8')
-        f.writelines([' '.join(sen)+'\n' for sen in inference_sum])
-        f.close()
+        # f=open('output_self_attn_no_decode_first_filled_template_test.txt','w',encoding='utf-8')
+        # f.writelines([' '.join(sen)+'\n' for sen in inference_sum])
+        # f.close()
+        
+        if self.opt['saved_hypo_txt'] is not None:
+            f=open(self.opt['saved_hypo_txt'],'w',encoding='utf-8')
+            f.writelines([' '.join(sen)+'\n' for sen in inference_sum])
+            f.close()
 
         # f=open('golden_test.txt','w',encoding='utf-8')
         # f.writelines([' '.join(sen)+'\n' for sen in golden_sum])
@@ -567,6 +598,29 @@ class TrainLoop_fusion_gen():
         # f.close()
 
         return output_dict_gen
+
+    def all_response_movie_recall_cal(self,decode_preds, matching_scores,labels):
+
+        # matching_scores is non-mask version [bsz, seq_len, matching_vocab]
+        # decode_preds [bsz, seq_len]
+        # labels [bsz, movie_length_with_padding]
+        # print('decode_preds shape', decode_preds.shape)
+        # print('matching_scores shape', matching_scores.shape)
+        # print('labels shape', labels.shape)
+        decode_preds = decode_preds[:, 1:] # removing the start index
+
+        labels = labels * (labels!=-1) # removing the padding token
+
+        batch_size, seq_len = decode_preds.shape[0], decode_preds.shape[1]
+        for cur_b in range(batch_size):
+            for cur_seq_len in range(seq_len):
+                if decode_preds[cur_b][cur_seq_len] ==6: # word id is 6
+                    _, pred_idx = torch.topk(matching_scores[cur_b][cur_seq_len], k=100, dim=-1)
+                    targets = labels[cur_b]
+                    for target in targets:
+                        self.metrics_gen["recall@1"] += int(target in pred_idx[:1].tolist())
+                        self.metrics_gen["recall@10"] += int(target in pred_idx[:10].tolist())
+                        self.metrics_gen["recall@50"] += int(target in pred_idx[:50].tolist())
 
     def metrics_cal_gen(self,rec_loss,preds,responses,recs, beam=1):
         def bleu_cal(sen1, tar1):
@@ -584,6 +638,7 @@ class TrainLoop_fusion_gen():
                     else:
                         return int(0)
             return int(0)
+
 
         def distinct_metrics(outs):
             # outputs is a list which contains several sentences, each sentence contains several words
@@ -625,6 +680,10 @@ class TrainLoop_fusion_gen():
         total_movie_gth_response_cnt = 0
         have_movie_res_cnt = 0
         loop = 0
+        total_item_response_cnt=0
+        total_hypo_word_count=0
+        novel_pred_movies =[]
+        non_novel_pred_movies =[]
         # for out, tar, rec in zip(predict_s, golden_s, recs):
         for out in predict_s:
             tar = golden_s[loop // beam]
@@ -637,9 +696,24 @@ class TrainLoop_fusion_gen():
             self.metrics_gen['bleu4']+=bleu4
             self.metrics_gen['count']+=1
             self.metrics_gen['true_recall_movie_count']+=response_movie_recall_cal(out, tar)
+            for word in out:
+                total_hypo_word_count +=1
+                if '@' in word:
+                    total_item_response_cnt+=1
+                    try:
+                        int_movie_id = int(word[1:])
+                        if int_movie_id in set(self.total_novel_movies):
+                            novel_pred_movies.append(int_movie_id)
+                        else:
+                            non_novel_pred_movies.append(int_movie_id)
+                    except:
+                        non_novel_pred_movies.append(word[1:])
+                        pass
             
+        total_target_word_count = 0
         for tar in golden_s:
             for word in tar:
+                total_target_word_count +=1
                 if '@' in word:
                     total_movie_gth_response_cnt+=1
             for word in tar:
@@ -654,9 +728,23 @@ class TrainLoop_fusion_gen():
         self.metrics_gen['dist4']=dis4
 
         self.metrics_gen['res_movie_recall'] = self.metrics_gen['true_recall_movie_count'] / have_movie_res_cnt
+        self.metrics_gen["recall@1"] = self.metrics_gen["recall@1"] / have_movie_res_cnt
+        self.metrics_gen["recall@10"] = self.metrics_gen["recall@10"] / have_movie_res_cnt
+        self.metrics_gen["recall@50"] = self.metrics_gen["recall@50"] / have_movie_res_cnt
+        print('----------'*10)
         print('total_movie_gth_response_cnt: ', total_movie_gth_response_cnt)
+        print('total_gth_response_cnt: ', len(golden_s))
+        print('total_hypo_response_cnt: ', len(predict_s))
+        print('hypo item ratio: ', total_item_response_cnt / len(predict_s))
+        print('target item ratio: ', total_movie_gth_response_cnt / len(golden_s))
         print('have_movie_res_cnt: ', have_movie_res_cnt)
-
+        print('len(novel_pred_movies): ', len(novel_pred_movies))
+        print('novel_pred_movies: ', novel_pred_movies)
+        print('len(non_novel_pred_movies): ', len(non_novel_pred_movies))
+        print('num of different predicted movies: ', len(set(non_novel_pred_movies)))
+        print('non_novel_pred_movies: ', set(non_novel_pred_movies))
+        print('----------'*10)
+        
     def vector2sentence(self,batch_sen):
         sentences=[]
         for sen in batch_sen.numpy().tolist():
@@ -813,21 +901,31 @@ class TrainLoop_fusion_gen():
 
 if __name__ == '__main__':
     args=setup_args().parse_args()
-    import os
-    os.environ['CUDA_VISIBLE_DEVICES']=args.gpu
+    # import os
+    # os.environ['CUDA_VISIBLE_DEVICES']=args.gpu
     print('CUDA_VISIBLE_DEVICES:', os.environ['CUDA_VISIBLE_DEVICES'])
     print(vars(args))
     if args.is_finetune==False:
         loop=TrainLoop_fusion_rec(vars(args),is_finetune=False)
-        # loop.model.load_model()
+        # loop.model.load_model('saved_model/net_parameter1_bu.pkl')
         loop.train()
     else:
         loop=TrainLoop_fusion_gen(vars(args),is_finetune=True)
         #Tips: should at least load one of the model By Jokie
+
+        #if validation 
+        #WAY1:
+        # loop.model.load_model('saved_model/matching_linear_model/generation_model_best.pkl')
+
+        #WAY2:
+        # loop.model.load_model('saved_model/sattn_dialog_model_best.pkl')
         # loop.model.load_model('saved_model/generation_model_best.pkl')
         # loop.model.load_model('saved_model/generation_model.pkl')
         # loop.model.load_model('saved_model/self_attn_generation_model_22.pkl')
-        loop.model.load_model()
+
+        #WAY3: insert
+        # loop.model.load_model()
+        loop.model.load_model(args.load_model_pth)
+
         loop.train()
-    # met=loop.val(True)
-    #print(met)
+    

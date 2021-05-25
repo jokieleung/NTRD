@@ -1071,8 +1071,8 @@ class TransformerDecoderLayerSelection(nn.Module):
     def forward(self, x, encoder_output, encoder_mask, movie_embed, movie_embed_mask):
     # def forward(self, x, encoder_output, encoder_mask, movie_embed, movie_embed_mask, decoder_output, decoder_output_mask):
 
+        # # first self attn for template-aware attention 
         # decoder_mask = self._create_selfattn_mask(x)
-        # # first self attn
         # residual = x
         # # don't peak into the future!
         # x = self.self_attention(query=x, mask=decoder_mask)

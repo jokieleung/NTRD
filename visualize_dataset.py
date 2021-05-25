@@ -27,13 +27,13 @@ import numpy as np
 from tqdm import tqdm
 from math import exp
 import os
-os.environ['CUDA_VISIBLE_DEVICES']='3'
+os.environ['CUDA_VISIBLE_DEVICES']='0'
 import signal
 import json
 import argparse
 import pickle as pkl
 from dataset import dataset,CRSdataset
-from e2e_model import E2ECrossModel
+from model import CrossModel
 import torch.nn as nn
 from torch import optim
 import torch
@@ -57,7 +57,7 @@ def setup_args():
     train.add_argument("-max_r_length","--max_r_length",type=int,default=30)
     train.add_argument("-beam","--beam",type=int,default=1)
     # train.add_argument("-max_r_length","--max_r_length",type=int,default=256)
-    train.add_argument("-batch_size","--batch_size",type=int,default=128)
+    train.add_argument("-batch_size","--batch_size",type=int,default=32)
     train.add_argument("-max_count","--max_count",type=int,default=5)
     train.add_argument("-use_cuda","--use_cuda",type=bool,default=True)
     train.add_argument("-is_template","--is_template",type=bool,default=True)
@@ -66,12 +66,15 @@ def setup_args():
     train.add_argument("-learningrate","--learningrate",type=float,default=1e-3)
     train.add_argument("-optimizer","--optimizer",type=str,default='adam')
     train.add_argument("-momentum","--momentum",type=float,default=0)
-    train.add_argument("-is_finetune","--is_finetune",type=bool,default=False)
+    train.add_argument("-is_finetune","--is_finetune",type=bool,default=True)
     train.add_argument("-embedding_type","--embedding_type",type=str,default='random')
-    train.add_argument("-save_exp_name","--save_exp_name",type=str,default='saved_model/sattn_e2eCRS')
-    train.add_argument("-epoch","--epoch",type=int,default=50)
+    train.add_argument("-save_exp_name","--save_exp_name",type=str,default='saved_model/new_model')
+    train.add_argument("-saved_hypo_txt","--saved_hypo_txt",type=str,default='case_file/output_hypo_latest.txt')
+    train.add_argument("-load_model_pth","--load_model_pth",type=str,default='saved_model/net_parameter1.pkl')
+    train.add_argument("-epoch","--epoch",type=int,default=0)
     train.add_argument("-gpu","--gpu",type=str,default='2')
     train.add_argument("-gradient_clip","--gradient_clip",type=float,default=0.1)
+    train.add_argument("-gen_loss_weight","--gen_loss_weight",type=float,default=5)
     train.add_argument("-embedding_size","--embedding_size",type=int,default=300)
 
     train.add_argument("-n_heads","--n_heads",type=int,default=2)
@@ -98,14 +101,9 @@ def setup_args():
     train.add_argument("-item_update_mode","--item_update_mode",type=str,default='0,1')
     train.add_argument("-using_all_hops","--using_all_hops",type=bool,default=True)
     train.add_argument("-num_bases", "--num_bases", type=int, default=8)
-
-
-
-    
-
     return train
 
-class TrainLoop_fusion_e2e():
+class TrainLoop_fusion_gen():
     def __init__(self, opt, is_finetune):
         self.opt=opt
         self.train_dataset=dataset('data/train_data.jsonl',opt)
@@ -153,7 +151,7 @@ class TrainLoop_fusion_e2e():
         )
 
     def build_model(self,is_finetune):
-        self.model = E2ECrossModel(self.opt, self.dict, is_finetune)
+        self.model = CrossModel(self.opt, self.dict, is_finetune)
         if self.opt['embedding_type'] != 'random':
             pass
         if self.use_cuda:
@@ -163,7 +161,7 @@ class TrainLoop_fusion_e2e():
         # self.model.load_model()
         losses=[]
         best_val_gen=0
-        best_val_rec=0.0
+        best_val_rec=0
         gen_stop=False
         for i in range(self.epoch*3):
             train_set=CRSdataset(self.train_dataset.data_process(True),self.opt['n_entity'],self.opt['n_concept'])
@@ -177,12 +175,13 @@ class TrainLoop_fusion_e2e():
                 for b in range(batch_size):
                     seed_set = entity[b].nonzero().view(-1).tolist()
                     seed_sets.append(seed_set)
-                self.model.train()
-                self.zero_grad()
+                # self.model.train()
+                # self.zero_grad()
 
-                scores, preds, rec_scores, rec_loss, gen_loss, mask_loss, info_db_loss, info_con_loss, selection_loss, matching_pred, matching_scores=self.model(context.cuda(), response.cuda(), mask_response.cuda(), concept_mask, dbpedia_mask, seed_sets, movie, concept_vec, db_vec, entity_vector.cuda(), rec,movies_gth.cuda(),movie_nums, test=False)
+                scores, preds, rec_scores, rec_loss, gen_loss, mask_loss, info_db_loss, info_con_loss, selection_loss, matching_pred,matching_scores=self.model(context.cuda(), response.cuda(), mask_response.cuda(), concept_mask, dbpedia_mask, seed_sets, movie, concept_vec, db_vec, entity_vector.cuda(), rec,movies_gth.cuda(),movie_nums, test=False)
 
-                joint_loss=gen_loss + selection_loss
+                gen_loss = self.opt['gen_loss_weight'] * gen_loss
+                joint_loss= gen_loss + selection_loss
 
                 losses.append([gen_loss, selection_loss])
                 self.backward(joint_loss)
@@ -199,17 +198,21 @@ class TrainLoop_fusion_e2e():
             else:
                 best_val_gen = output_metrics_gen["dist4"]
                 self.model.save_model(model_name= self.opt['save_exp_name'] + '_best_dist4.pkl')
-                print("generator model saved once------------------------------------------------")
+                print("Best Dist4 generator model saved once------------------------------------------------")
             print("best dist4 is :", best_val_gen)
-            
-            if best_val_rec > output_metrics_gen["res_movie_recall"]:
+
+            if best_val_rec > output_metrics_gen["recall@50"] + output_metrics_gen["recall@1"]:
                 pass
             else:
-                best_val_rec = output_metrics_gen["res_movie_recall"]
-                self.model.save_model(model_name= self.opt['save_exp_name'] + '_best_Rec1.pkl')
-                print("generator model saved once------------------------------------------------")
-            print("best res_movie_R@1 is :", best_val_rec)
-
+                best_val_rec = output_metrics_gen["recall@50"] + output_metrics_gen["recall@1"]
+                self.model.save_model(model_name= self.opt['save_exp_name'] + '_best_Rec.pkl')
+                print("Best Recall generator model saved once------------------------------------------------")
+            print("best res_movie_R@1 is :", output_metrics_gen["recall@1"])
+            print("best res_movie_R@10 is :", output_metrics_gen["recall@10"])
+            print("best res_movie_R@50 is :", output_metrics_gen["recall@50"])
+            print('cur selection_loss is %f'%(sum([l[1] for l in losses])/len(losses)))
+            print('cur Epoch is : ', i)
+            
             # if i % 5 ==0: # save each 5 epoch
             #     model_name = self.opt['save_exp_name'] + '_' + str(i) + '.pkl'
             #     self.model.save_model(model_name=model_name)
@@ -221,88 +224,53 @@ class TrainLoop_fusion_e2e():
     def val(self,is_test=False):
         self.metrics_gen={"ppl":0,"dist1":0,"dist2":0,"dist3":0,"dist4":0,"bleu1":0,"bleu2":0,"bleu3":0,"bleu4":0,"count":0,"true_recall_movie_count":0, "res_movie_recall":0.0,"recall@1":0,"recall@10":0,"recall@50":0}
         self.metrics_rec={"recall@1":0,"recall@10":0,"recall@50":0,"loss":0,"gate":0,"count":0,'gate_count':0}
-        self.model.eval()
-        if is_test:
-            val_dataset = dataset('data/test_data.jsonl', self.opt)
-        else:
-            val_dataset = dataset('data/valid_data.jsonl', self.opt)
+        # self.model.eval()
+        val_dataset = dataset('data/test_data.jsonl', self.opt)
         val_set=CRSdataset(val_dataset.data_process(True),self.opt['n_entity'],self.opt['n_concept'])
         val_dataset_loader = torch.utils.data.DataLoader(dataset=val_set,
                                                            batch_size=self.batch_size,
                                                            shuffle=False)
+
+        train_set=CRSdataset(self.train_dataset.data_process(True),self.opt['n_entity'],self.opt['n_concept'])
+        train_dataset_loader = torch.utils.data.DataLoader(dataset=train_set,
+                                                            batch_size=self.batch_size,
+                                                            shuffle=False)
         inference_sum=[]
         golden_sum=[]
+        gold_movie_ids=[]
+        train_gold_movie_ids=[]
+        train_golden_sum=[]
         context_sum=[]
         losses=[]
         recs=[]
+
+        match_movie_item = []
         for context, c_lengths, response, r_length, mask_response, mask_r_length, entity, entity_vector, movie, concept_mask, dbpedia_mask, concept_vec, db_vec, rec,movies_gth,movie_nums in tqdm(val_dataset_loader):
-            with torch.no_grad():
-                seed_sets = []
-                batch_size = context.shape[0]
-                for b in range(batch_size):
-                    seed_set = entity[b].nonzero().view(-1).tolist()
-                    seed_sets.append(seed_set)
+            gold_res, cur_gold_movie_ids = self.template_vector2sentence(response.cpu(), movies_gth.cpu())
+            # golden_sum.extend(gold_res)
+            gold_movie_ids.extend(cur_gold_movie_ids)
 
-                #-----dump , run the first time only to get the gen_loss, could be optimized here ------By Jokie 2021/04/15
-                _, _, _, _, gen_loss, mask_loss, info_db_loss, info_con_loss, selection_loss, _, _ = self.model(context.cuda(), response.cuda(), mask_response.cuda(), concept_mask, dbpedia_mask, seed_sets, movie, concept_vec, db_vec, entity_vector.cuda(), rec,movies_gth.cuda(),movie_nums, test=False)
-                scores, preds, rec_scores, rec_loss, _, mask_loss, info_db_loss, info_con_loss, selection_loss, matching_pred, matching_scores = self.model(context.cuda(), response.cuda(), mask_response.cuda(), concept_mask, dbpedia_mask, seed_sets, movie, concept_vec, db_vec, entity_vector.cuda(), rec,movies_gth.cuda(),movie_nums,test=True, maxlen=20, bsz=batch_size)
+        for context, c_lengths, response, r_length, mask_response, mask_r_length, entity, entity_vector, movie, concept_mask, dbpedia_mask, concept_vec, db_vec, rec,movies_gth,movie_nums in tqdm(train_dataset_loader):
 
-                self.all_response_movie_recall_cal(preds.cpu(), matching_scores.cpu(),movies_gth.cpu())
-
-            # golden_sum.extend(self.vector2sentence(response.cpu()))
-            # inference_sum.extend(self.vector2sentence(preds.cpu()))
-            # context_sum.extend(self.vector2sentence(context.cpu()))
-
-            #-----------template pro-process gth response and prediction--------------------
-            if self.is_template:
-                golden_sum.extend(self.template_vector2sentence(response.cpu(), movies_gth.cpu()))
-                if matching_pred is not None:
-                    inference_sum.extend(self.template_vector2sentence(preds.cpu(), matching_pred.cpu()))
-                else:
-                    inference_sum.extend(self.template_vector2sentence(preds.cpu(), None))
-
-            else:
-                golden_sum.extend(self.vector2sentence(response.cpu()))
-                inference_sum.extend(self.vector2sentence(preds.cpu()))
-            context_sum.extend(self.vector2sentence(context.cpu()))
+            train_gold_res, cur_train_gold_movie_ids = self.template_vector2sentence(response.cpu(), movies_gth.cpu())
+            # train_golden_sum.extend(train_gold_res)
+            train_gold_movie_ids.extend(cur_train_gold_movie_ids)
+            
+            # train_golden_sum.extend(self.template_vector2sentence(response.cpu(), movies_gth.cpu()))
 
 
-            recs.extend(rec.cpu())
-            losses.append(torch.mean(gen_loss))
-            #print(losses)
-            #exit()
+        for val_movie in set(gold_movie_ids):
+            if val_movie not in set(train_gold_movie_ids):
+                match_movie_item.append(val_movie)
+        print('-'*50)
+        print(len(set(match_movie_item)))
+        print('match movie(in test not in train):')
+        print(set(match_movie_item))
+        print('-'*50)
 
-        self.metrics_cal_gen(losses,inference_sum,golden_sum,recs, beam=self.opt['beam'])
 
-        output_dict_gen={}
-        for key in self.metrics_gen:
-            if 'bleu' in key:
-                output_dict_gen[key]=self.metrics_gen[key]/self.metrics_gen['count']
-            else:
-                output_dict_gen[key]=self.metrics_gen[key]
-        print(output_dict_gen)
 
-        # f=open('context_test.txt','w',encoding='utf-8')
-        # f.writelines([' '.join(sen)+'\n' for sen in context_sum])
-        # f.close()
 
-        f=open('self_attn_best_rec_output.txt','w',encoding='utf-8')
-        f.writelines([' '.join(sen)+'\n' for sen in inference_sum])
-        f.close()
-
-        # f=open('golden_test.txt','w',encoding='utf-8')
-        # f.writelines([' '.join(sen)+'\n' for sen in golden_sum])
-        # f.close()
-
-        # f=open('case_visualize.txt','w',encoding='utf-8')
-        # for cont, hypo, gold in zip(context_sum, inference_sum, golden_sum):
-        #     f.writelines('context: '+' '.join(cont)+'\n')
-        #     f.writelines('hypo: '+' '.join(hypo)+'\n')
-        #     f.writelines('gold: '+' '.join(gold)+'\n')
-        #     f.writelines('\n')
-        # f.close()
-
-        return output_dict_gen
 
     def all_response_movie_recall_cal(self,decode_preds, matching_scores,labels):
 
@@ -312,7 +280,7 @@ class TrainLoop_fusion_e2e():
         # print('decode_preds shape', decode_preds.shape)
         # print('matching_scores shape', matching_scores.shape)
         # print('labels shape', labels.shape)
-        decode_preds = decode_preds[:, 1:]
+        decode_preds = decode_preds[:, 1:] # removing the start index
 
         labels = labels * (labels!=-1) # removing the padding token
 
@@ -326,7 +294,6 @@ class TrainLoop_fusion_e2e():
                         self.metrics_gen["recall@1"] += int(target in pred_idx[:1].tolist())
                         self.metrics_gen["recall@10"] += int(target in pred_idx[:10].tolist())
                         self.metrics_gen["recall@50"] += int(target in pred_idx[:50].tolist())
-
 
     def metrics_cal_gen(self,rec_loss,preds,responses,recs, beam=1):
         def bleu_cal(sen1, tar1):
@@ -344,6 +311,7 @@ class TrainLoop_fusion_e2e():
                     else:
                         return int(0)
             return int(0)
+
 
         def distinct_metrics(outs):
             # outputs is a list which contains several sentences, each sentence contains several words
@@ -385,6 +353,8 @@ class TrainLoop_fusion_e2e():
         total_movie_gth_response_cnt = 0
         have_movie_res_cnt = 0
         loop = 0
+        total_item_response_cnt=0
+        total_hypo_word_count=0
         # for out, tar, rec in zip(predict_s, golden_s, recs):
         for out in predict_s:
             tar = golden_s[loop // beam]
@@ -397,9 +367,15 @@ class TrainLoop_fusion_e2e():
             self.metrics_gen['bleu4']+=bleu4
             self.metrics_gen['count']+=1
             self.metrics_gen['true_recall_movie_count']+=response_movie_recall_cal(out, tar)
+            for word in out:
+                total_hypo_word_count +=1
+                if '@' in word:
+                    total_item_response_cnt+=1
             
+        total_target_word_count = 0
         for tar in golden_s:
             for word in tar:
+                total_target_word_count +=1
                 if '@' in word:
                     total_movie_gth_response_cnt+=1
             for word in tar:
@@ -417,9 +393,15 @@ class TrainLoop_fusion_e2e():
         self.metrics_gen["recall@1"] = self.metrics_gen["recall@1"] / have_movie_res_cnt
         self.metrics_gen["recall@10"] = self.metrics_gen["recall@10"] / have_movie_res_cnt
         self.metrics_gen["recall@50"] = self.metrics_gen["recall@50"] / have_movie_res_cnt
+        print('----------'*10)
         print('total_movie_gth_response_cnt: ', total_movie_gth_response_cnt)
+        print('total_gth_response_cnt: ', len(golden_s))
+        print('total_hypo_response_cnt: ', len(predict_s))
+        print('hypo item ratio: ', total_item_response_cnt / len(predict_s))
+        print('target item ratio: ', total_movie_gth_response_cnt / len(golden_s))
         print('have_movie_res_cnt: ', have_movie_res_cnt)
-
+        print('----------'*10)
+        
     def vector2sentence(self,batch_sen):
         sentences=[]
         for sen in batch_sen.numpy().tolist():
@@ -436,6 +418,7 @@ class TrainLoop_fusion_e2e():
     
     def template_vector2sentence(self,batch_sen, batch_selection_pred):
         sentences=[]
+        movie_ids=[]
         all_movie_labels = []
         if batch_selection_pred is not None:
             batch_selection_pred = batch_selection_pred * (batch_selection_pred!=-1)
@@ -454,7 +437,11 @@ class TrainLoop_fusion_e2e():
                         # print('selection_label2movieID',self.selection_label2movieID[all_movie_labels[curr_movie_token]])
 
                         # WAY1: original method
-                        sentence.append('@' + str(self.selection_label2movieID[all_movie_labels[curr_movie_token]]))
+                        str_movie_id = '@' + str(self.selection_label2movieID[all_movie_labels[curr_movie_token]])
+                        int_movie_id = self.selection_label2movieID[all_movie_labels[curr_movie_token]]
+                        sentence.append(str_movie_id)
+                        movie_ids.append(int_movie_id)
+
 
 
                         # WAY2: print out the movie name, but should comment when calculating the gen metrics
@@ -476,7 +463,7 @@ class TrainLoop_fusion_e2e():
             # print(u' '.join(sentence).encode('utf-8').strip())
 
         assert curr_movie_token == len(all_movie_labels)
-        return sentences
+        return sentences, movie_ids
 
     @classmethod
     def optim_opts(self):
@@ -580,11 +567,27 @@ if __name__ == '__main__':
     # os.environ['CUDA_VISIBLE_DEVICES']=args.gpu
     print('CUDA_VISIBLE_DEVICES:', os.environ['CUDA_VISIBLE_DEVICES'])
     print(vars(args))
-    loop=TrainLoop_fusion_e2e(vars(args),is_finetune=True)
-    
-    loop.model.load_model('saved_model/sattn_e2eCRS_best_Rec1.pkl')
-    # loop.model.load_model('saved_model/sattn_e2eCRS_best_dist4.pkl')
-    # loop.model.load_model('saved_model/self_attn_generation_model_22.pkl')
-    # loop.model.load_model()
-    loop.train()
+    if args.is_finetune==False:
+        loop=TrainLoop_fusion_rec(vars(args),is_finetune=False)
+        # loop.model.load_model('saved_model/net_parameter1_bu.pkl')
+        loop.train()
+    else:
+        loop=TrainLoop_fusion_gen(vars(args),is_finetune=True)
+        #Tips: should at least load one of the model By Jokie
 
+        #if validation 
+        #WAY1:
+        # loop.model.load_model('saved_model/matching_linear_model/generation_model_best.pkl')
+
+        #WAY2:
+        # loop.model.load_model('saved_model/sattn_dialog_model_best.pkl')
+        # loop.model.load_model('saved_model/generation_model_best.pkl')
+        # loop.model.load_model('saved_model/generation_model.pkl')
+        # loop.model.load_model('saved_model/self_attn_generation_model_22.pkl')
+
+        #WAY3: insert
+        # loop.model.load_model()
+        loop.model.load_model(args.load_model_pth)
+
+        loop.train()
+    

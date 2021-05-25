@@ -256,8 +256,8 @@ class CrossModel(nn.Module):
 
             copy_latent = self.copy_norm(torch.cat([kg_attn_norm.unsqueeze(1), db_attn_norm.unsqueeze(1), scores], -1))
 
-            latents.append(scores)
-            # latents.append(copy_latent)
+            latents.append(scores) # WAY2:self attn matching model
+            # latents.append(copy_latent) # WAY1:original matching linear model
 
             # logits = self.output(latent)
             con_logits = self.representation_bias(copy_latent)*self.mask4.unsqueeze(0).unsqueeze(0)#F.linear(copy_latent, self.embeddings.weight)
@@ -351,12 +351,6 @@ class CrossModel(nn.Module):
 
                 copy_latent = self.copy_norm(torch.cat((db_latent, concept_latent, dialog_latent), dim=-1))
 
-                # WAY1
-                # if i != 0:
-                #     print('dialog_latent shape', dialog_latent.shape)
-                #     print('copy_latent shape', copy_latent.shape)
-                #     all_latents.append(copy_latent)
-                #WAY2
                 all_latents.append(copy_latent)
 
                 # copy_logits = self.copy_output(copy_latent) * self.copy_mask.unsqueeze(0).unsqueeze(0)
@@ -618,21 +612,28 @@ class CrossModel(nn.Module):
                 #-------------------------------- stage2 movie selection loss-------------- by Jokie
                 masked_for_selection_token = (mask_ys == 6)
 
-                #WAY1: simply linear
+                #---------------------------WAY1: simply linear-------------------------------
+                # original implementation
                 # selected_token_latent = torch.masked_select(latent, masked_for_selection_token.unsqueeze(-1).expand_as(latent)).view(-1, latent.shape[-1])
-                # matching_logits = self.matching_linear(selected_token_latent)
+                # # matching_logits = self.matching_linear(selected_token_latent)
 
-                #WAY2: self attn
+                #change for inference the R@10 R@50
+                # matching_logits_ = self.matching_linear(latent)
+                # matching_logits = torch.masked_select(matching_logits_, masked_for_selection_token.unsqueeze(-1).expand_as(matching_logits_)).view(-1, matching_logits_.shape[-1])
+
+                #---------------------WAY2: self attn----------------------------------------------------
                 matching_tensor, _ = self.selection_cross_attn_decoder(latent, encoder_states, db_encoding)
-                matching_logits = self.matching_linear(matching_tensor)
+                matching_logits_ = self.matching_linear(matching_tensor)
+                matching_logits = torch.masked_select(matching_logits_, masked_for_selection_token.unsqueeze(-1).expand_as(matching_logits_)).view(-1, matching_logits_.shape[-1])
 
-                matching_logits = torch.masked_select(matching_logits, masked_for_selection_token.unsqueeze(-1).expand_as(matching_logits)).view(-1, matching_logits.shape[-1])
+                # ---------------------------------------------
 
-                _, matching_pred = matching_logits.max(dim=-1) # [bsz * dynamic_movie_nums]
+                #W1: greedy
+                _, matching_pred = matching_logits.max(dim=-1) # [bsz * dynamic_movie_nums] 
+                #W2: sample
+                # matching_pred = torch.multinomial(F.softmax(matching_logits, dim=-1), num_samples=1, replacement=True)
                 movies_gth = torch.masked_select(movies_gth, (movies_gth!=0))
                 selection_loss = torch.mean(self.compute_loss(matching_logits, movies_gth)) # movies_gth.squeeze(0):[bsz * dynamic_movie_nums]
-                # print('shape of selected_token_latent', selected_token_latent.shape)
-                # print('selection_loss', selection_loss)
                 
 
                 
@@ -674,18 +675,25 @@ class CrossModel(nn.Module):
                 masked_for_selection_token = (preds_for_selection == 6)
 
                 
-                #WAY1: simply linear
+                #---------------------------WAY1: simply linear-------------------------------
+                # # original implementation
                 # selected_token_latent = torch.masked_select(latent, masked_for_selection_token.unsqueeze(-1).expand_as(latent)).view(-1, latent.shape[-1])
                 # matching_logits = self.matching_linear(selected_token_latent)
 
-                #WAY2: self attn
-                matching_tensor, _ = self.selection_cross_attn_decoder(latent, encoder_states, db_encoding) #TODO change for self-attn
-                matching_logits = self.matching_linear(matching_tensor)            
+                # #change for inference the R@10 R@50
+                # matching_logits_ = self.matching_linear(latent)
+                # matching_logits = torch.masked_select(matching_logits_, masked_for_selection_token.unsqueeze(-1).expand_as(matching_logits_)).view(-1, matching_logits_.shape[-1])
 
-                matching_logits = torch.masked_select(matching_logits, masked_for_selection_token.unsqueeze(-1).expand_as(matching_logits)).view(-1, matching_logits.shape[-1])
+                #---------------------WAY2: self attn----------------------------------------------------
+                matching_tensor, _ = self.selection_cross_attn_decoder(latent, encoder_states, db_encoding) 
+                matching_logits_ = self.matching_linear(matching_tensor)    
+                matching_logits = torch.masked_select(matching_logits_, masked_for_selection_token.unsqueeze(-1).expand_as(matching_logits_)).view(-1, matching_logits_.shape[-1])
 
                 if matching_logits.shape[0] is not 0:
-                    _, matching_pred = matching_logits.max(dim=-1) # [bsz * dynamic_movie_nums]
+                    #W1: greedy
+                    _, matching_pred = matching_logits.max(dim=-1) # [bsz * dynamic_movie_nums] 
+                    #W2: sample
+                    # matching_pred = torch.multinomial(F.softmax(matching_logits,dim=-1), num_samples=1, replacement=True)
                 else:
                     matching_pred = None
                 # print('matching_pred', matching_pred.shape)
@@ -694,10 +702,10 @@ class CrossModel(nn.Module):
                 gen_loss = None
                 selection_loss = None
 
-            return scores, preds, entity_scores, rec_loss, gen_loss, mask_loss, info_db_loss, info_con_loss, selection_loss, matching_pred
+            return scores, preds, entity_scores, rec_loss, gen_loss, mask_loss, info_db_loss, info_con_loss, selection_loss, matching_pred, matching_logits_
 
         else:
-            return None, None, None, rec_loss, None, None, info_db_loss, info_con_loss, None, None
+            return None, None, entity_scores, rec_loss, None, None, info_db_loss, info_con_loss, None, None
 
     def reorder_encoder_states(self, encoder_states, indices):
         """

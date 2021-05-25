@@ -18,7 +18,7 @@ from copy import deepcopy
 MOVIE_TOKEN = '__MOVIE__'
 
 class dataset(object):
-    def __init__(self,filename,opt):
+    def __init__(self,filename):
         self.entity2entityId=pkl.load(open('data/entity2entityId.pkl','rb'))
         self.movieID2selection_label=pkl.load(open('movieID2selection_label.pkl','rb'))
         self.selection_label2movieID={self.movieID2selection_label[key]:key for key in self.movieID2selection_label}
@@ -28,26 +28,28 @@ class dataset(object):
         self.subkg=pkl.load(open('data/subkg.pkl','rb'))    #need not back process
         self.text_dict=pkl.load(open('data/text_dict.pkl','rb'))
 
-        self.batch_size=opt['batch_size']
-        self.max_c_length=opt['max_c_length']
-        self.max_r_length=opt['max_r_length']
-        self.max_count=opt['max_count']
-        self.entity_num=opt['n_entity']
+        # self.batch_size=opt['batch_size']
+        # self.max_c_length=opt['max_c_length']
+        # self.max_r_length=opt['max_r_length']
+        # self.max_count=opt['max_count']
+        # self.entity_num=opt['n_entity']
         #self.word2index=json.load(open('word2index.json',encoding='utf-8'))
 
         f=open(filename,encoding='utf-8')
         self.data=[]
         self.corpus=[]
+        self.all_movies=[]
         for line in tqdm(f):
             lines=json.loads(line.strip())
             seekerid=lines["initiatorWorkerId"]
             recommenderid=lines["respondentWorkerId"]
             contexts=lines['messages']
             movies=lines['movieMentions']
+            self.all_movies.extend([int(movie_id) for movie_id in movies])
             altitude=lines['respondentQuestions']
             initial_altitude=lines['initiatorQuestions']
-            cases=self._context_reformulate(contexts,movies,altitude,initial_altitude,seekerid,recommenderid)
-            self.data.extend(cases)
+            # cases=self._context_reformulate(contexts,movies,altitude,initial_altitude,seekerid,recommenderid)
+            # self.data.extend(cases)
 
         #if 'train' in filename:
 
@@ -109,12 +111,9 @@ class dataset(object):
             # if is_response and MOVIE_TOKEN in word:
                 movie_mask.append(1)
                 try:
-                    # original movie gth
-                    # cur_movie_id = self.selection_label2movieID[movies_gth[cur_movie]]
-                    # entity = self.id2entity[int(cur_movie_id)]
-                    # id=self.entity2entityId[entity]
-                    #hacked for novel exp by Jokie 2021/05/01
-                    id=movies_gth[cur_movie]
+                    cur_movie_id = self.selection_label2movieID[movies_gth[cur_movie]]
+                    entity = self.id2entity[int(cur_movie_id)]
+                    id=self.entity2entityId[entity]
                 except:
                     id=self.entity_max
                 cur_movie+=1
@@ -312,14 +311,7 @@ class dataset(object):
         for i in range(len(token_text_com)):
             if token_text_com[i][1:] in movies:
                 movie_rec.append(token_text_com[i][1:])
-                # WAY1: movie gth movie vocab size
-                # all_movie_selection_label.append(self.movieID2selection_label[int(token_text_com[i][1:])])
-                # WAY2: entity Id way. hacked for novel exp by Jokie 2021/05/01
-                try:
-                    entity = self.id2entity[int(token_text_com[i][1:])]
-                    all_movie_selection_label.append(self.entity2entityId[entity])
-                except:
-                    all_movie_selection_label.append(self.entity_max)
+                all_movie_selection_label.append(self.movieID2selection_label[int(token_text_com[i][1:])])
                 token_text_com[i] = masked_movie_by
                 masked_movie_num+=1
         movie_rec_trans=[]
@@ -471,5 +463,23 @@ class CRSdataset(Dataset):
         return len(self.data)
 
 if __name__=='__main__':
-    ds=dataset('data/train_data.jsonl')
-    print()
+    # train_dataset = dataset('data/full_data.jsonl')
+    train_dataset = dataset('data/train_data.jsonl')
+    val_dataset = dataset('data/valid_data.jsonl')
+    # val_dataset = dataset('data/test_data.jsonl')
+    match_movie_item = []
+
+    # print('val_dataset.all_movies')
+    # print(val_dataset.all_movies)
+
+
+    for val_movie in set(val_dataset.all_movies):
+        if val_movie not in set(train_dataset.all_movies):
+            # print(val_movie)
+            match_movie_item.append(val_movie)
+    print('-'*50)
+    print(len(set(match_movie_item)))
+    print('match movie(in test not in train):')
+    print(set(match_movie_item))
+    print('-'*50)
+

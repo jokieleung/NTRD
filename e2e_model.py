@@ -598,9 +598,9 @@ class E2ECrossModel(nn.Module):
 
             #WAY2: self attn
             matching_tensor, _ = self.selection_cross_attn_decoder(latent, encoder_states, db_encoding, kg_encoding)
-            matching_logits = self.matching_linear(matching_tensor)
+            matching_logits_ = self.matching_linear(matching_tensor)
 
-            matching_logits = torch.masked_select(matching_logits, masked_for_selection_token.unsqueeze(-1).expand_as(matching_logits)).view(-1, matching_logits.shape[-1])
+            matching_logits = torch.masked_select(matching_logits_, masked_for_selection_token.unsqueeze(-1).expand_as(matching_logits_)).view(-1, matching_logits_.shape[-1])
 
             _, matching_pred = matching_logits.max(dim=-1) # [bsz * dynamic_movie_nums]
             movies_gth = torch.masked_select(movies_gth, (movies_gth!=0))
@@ -651,9 +651,9 @@ class E2ECrossModel(nn.Module):
 
             #WAY2: self attn
             matching_tensor, _ = self.selection_cross_attn_decoder(latent, encoder_states, db_encoding, kg_encoding)
-            matching_logits = self.matching_linear(matching_tensor)            
+            matching_logits_ = self.matching_linear(matching_tensor)            
 
-            matching_logits = torch.masked_select(matching_logits, masked_for_selection_token.unsqueeze(-1).expand_as(matching_logits)).view(-1, matching_logits.shape[-1])
+            matching_logits = torch.masked_select(matching_logits_, masked_for_selection_token.unsqueeze(-1).expand_as(matching_logits_)).view(-1, matching_logits_.shape[-1])
 
             if matching_logits.shape[0] is not 0:
                 _, matching_pred = matching_logits.max(dim=-1) # [bsz * dynamic_movie_nums]
@@ -665,7 +665,7 @@ class E2ECrossModel(nn.Module):
             gen_loss = None
             selection_loss = None
 
-        return scores, preds, None, None, gen_loss, None, None, None, selection_loss, matching_pred
+        return scores, preds, None, None, gen_loss, None, None, None, selection_loss, matching_pred, matching_logits_
 
 
     def reorder_encoder_states(self, encoder_states, indices):
