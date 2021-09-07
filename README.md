@@ -42,4 +42,4 @@ If you find this paper helps your research, please kindly consider citing our pa
 
 # Acknowledgment
 
-This codebase is implemented based on [KGSF](https://github.com/RUCAIBox/KGSF). Many thanks to the authors for their efforts.
+This codebase is implemented based on [KGSF](https://github.com/RUCAIBox/KGSF). Many thanks to the authors for their open-source project.
