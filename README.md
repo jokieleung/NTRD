@@ -34,7 +34,15 @@ If you find this paper helps your research, please kindly consider citing our pa
 ```bibtex
 @inproceedings{liang2021learning,
   title={Learning Neural Templates for Recommender Dialogue System},
-  author={Liang, Zujie and Hu, Huang and Xu, Can and Miao, Jian and He, Yingying and Chen, Yining and Geng, Xiubo and Liang, Fan and Jiang, Daxin},
+  author={Liang, Zujie and 
+          Hu, Huang and 
+          Xu, Can and 
+          Miao, Jian and 
+          He, Yingying and 
+          Chen, Yining and 
+          Geng, Xiubo and 
+          Liang, Fan and 
+          Jiang, Daxin},
   booktitle={Proceedings of the 2021 Conference on Empirical Methods in Natural Language Processing (EMNLP)},
   year={2021}
 }
