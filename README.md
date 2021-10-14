@@ -1,5 +1,5 @@
 # NTRD
-This repository is the Pytorch implementation of our paper "**Learning Neural Templates for Recommender Dialogue System**" in **EMNLP 2021**.
+This repository is the Pytorch implementation of our paper "[**Learning Neural Templates for Recommender Dialogue System**](https://arxiv.org/abs/2109.12302)" in **EMNLP 2021**.
 
 
 
@@ -38,7 +38,7 @@ The model will report the result on test data automatically after covergence.
 
 # Citation
 
-If you find this paper helps your research, please kindly consider citing our paper in your publications.
+If you find this codebase helps your research, please kindly consider citing our paper in your publications.
 
 ```bibtex
 @inproceedings{liang2021learning,
