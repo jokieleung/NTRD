@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
-# Copyright (c) Facebook, Inc. and its affiliates.
-# This source code is licensed under the MIT license found in the
+# Copyright (c) Microsoft Coporation. and its affiliates.
+# This source code is licensed under the Apache 2.0 license found in the
 # LICENSE file in the root directory of this source tree.
 """The standard way to train a model. After training, also computes validation
 and test error.
@@ -27,7 +27,7 @@ import numpy as np
 from tqdm import tqdm
 from math import exp
 import os
-os.environ['CUDA_VISIBLE_DEVICES']='3'
+os.environ['CUDA_VISIBLE_DEVICES']='0'
 import signal
 import json
 import argparse
@@ -107,15 +107,15 @@ def setup_args():
 
 
 
-    
+
 
     return train
 
 class TrainLoop_fusion_rec():
     def __init__(self, opt, is_finetune):
         self.opt=opt
-        self.train_dataset=dataset('data/full_data.jsonl',opt)
-        # self.train_dataset=dataset('data/train_data.jsonl',opt)
+        # self.train_dataset=dataset('data/full_data.jsonl',opt)  # for novel experiment
+        self.train_dataset=dataset('data/train_data.jsonl',opt)
 
         self.dict=self.train_dataset.word2index
         self.index2word={self.dict[key]:key for key in self.dict}
@@ -499,7 +499,7 @@ class TrainLoop_fusion_gen():
             print("best res_movie_R@50 is :", output_metrics_gen["recall@50"])
             print('cur selection_loss is %f'%(sum([l[1] for l in losses])/len(losses)))
             print('cur Epoch is : ', i)
-            
+
             # if i % 5 ==0: # save each 5 epoch
             #     model_name = self.opt['save_exp_name'] + '_' + str(i) + '.pkl'
             #     self.model.save_model(model_name=model_name)
@@ -540,7 +540,7 @@ class TrainLoop_fusion_gen():
             # golden_sum.extend(self.vector2sentence(response.cpu()))
             # inference_sum.extend(self.vector2sentence(preds.cpu()))
             # context_sum.extend(self.vector2sentence(context.cpu()))
-                
+
                 self.all_response_movie_recall_cal(preds.cpu(), matching_scores.cpu(),movies_gth.cpu())
 
             #-----------template pro-process gth response and prediction--------------------
@@ -579,7 +579,7 @@ class TrainLoop_fusion_gen():
         # f=open('output_self_attn_no_decode_first_filled_template_test.txt','w',encoding='utf-8')
         # f.writelines([' '.join(sen)+'\n' for sen in inference_sum])
         # f.close()
-        
+
         if self.opt['saved_hypo_txt'] is not None:
             f=open(self.opt['saved_hypo_txt'],'w',encoding='utf-8')
             f.writelines([' '.join(sen)+'\n' for sen in inference_sum])
@@ -629,7 +629,7 @@ class TrainLoop_fusion_gen():
             bleu3 = sentence_bleu([tar1], sen1, weights=(0, 0, 1, 0))
             bleu4 = sentence_bleu([tar1], sen1, weights=(0, 0, 0, 1))
             return bleu1, bleu2, bleu3, bleu4
-        
+
         def response_movie_recall_cal(sen1, tar1):
             for word in sen1:
                 if '@' in word: # if is movie
@@ -709,7 +709,7 @@ class TrainLoop_fusion_gen():
                     except:
                         non_novel_pred_movies.append(word[1:])
                         pass
-            
+
         total_target_word_count = 0
         for tar in golden_s:
             for word in tar:
@@ -744,7 +744,7 @@ class TrainLoop_fusion_gen():
         print('num of different predicted movies: ', len(set(non_novel_pred_movies)))
         print('non_novel_pred_movies: ', set(non_novel_pred_movies))
         print('----------'*10)
-        
+
     def vector2sentence(self,batch_sen):
         sentences=[]
         for sen in batch_sen.numpy().tolist():
@@ -758,7 +758,7 @@ class TrainLoop_fusion_gen():
                     sentence.append('_UNK_')
             sentences.append(sentence)
         return sentences
-    
+
     def template_vector2sentence(self,batch_sen, batch_selection_pred):
         sentences=[]
         all_movie_labels = []
@@ -792,7 +792,7 @@ class TrainLoop_fusion_gen():
                         curr_movie_token +=1
                     else:
                         sentence.append(self.index2word[word])
-                    
+
                 elif word==3:
                     sentence.append('_UNK_')
             sentences.append(sentence)
@@ -913,7 +913,7 @@ if __name__ == '__main__':
         loop=TrainLoop_fusion_gen(vars(args),is_finetune=True)
         #Tips: should at least load one of the model By Jokie
 
-        #if validation 
+        #if validation
         #WAY1:
         # loop.model.load_model('saved_model/matching_linear_model/generation_model_best.pkl')
 
@@ -928,4 +928,4 @@ if __name__ == '__main__':
         loop.model.load_model(args.load_model_pth)
 
         loop.train()
-    
+
