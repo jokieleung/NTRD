@@ -3,22 +3,6 @@
 # Copyright (c) Microsoft Coporation. and its affiliates.
 # This source code is licensed under the Apache 2.0 license found in the
 # LICENSE file in the root directory of this source tree.
-"""The standard way to train a model. After training, also computes validation
-and test error.
-
-The user must provide a model (with ``--model``) and a task (with ``--task`` or
-``--pytorch-teacher-task``).
-
-Examples
---------
-
-.. code-block:: shell
-
-  python -m parlai.scripts.train -m ir_baseline -t dialog_babi:Task:1 -mf /tmp/model
-  python -m parlai.scripts.train -m seq2seq -t babi:Task10k:1 -mf '/tmp/model' -bs 32 -lr 0.5 -hs 128
-  python -m parlai.scripts.train -m drqa -t babi:Task10k:1 -mf /tmp/model -bs 10
-
-"""  # noqa: E501
 
 # TODO List:
 # * More logging (e.g. to files), make things prettier.
@@ -70,7 +54,7 @@ def setup_args():
     train.add_argument("-momentum","--momentum",type=float,default=0)
     train.add_argument("-is_finetune","--is_finetune",type=bool,default=False)
     train.add_argument("-embedding_type","--embedding_type",type=str,default='random')
-    train.add_argument("-save_exp_name","--save_exp_name",type=str,default='saved_model/new_model')
+    train.add_argument("-save_exp_name","--save_exp_name",type=str,default='saved_model')
     # train.add_argument("-saved_hypo_txt","--saved_hypo_txt",type=str,default='case_file/output_hypo_latest.txt')
     train.add_argument("-saved_hypo_txt","--saved_hypo_txt",type=str,default=None)
     train.add_argument("-load_model_pth","--load_model_pth",type=str,default='saved_model/net_parameter1.pkl')
@@ -236,7 +220,9 @@ class TrainLoop_fusion_rec():
                 rec_stop=True
             else:
                 best_val_rec = output_metrics_rec["recall@50"]+output_metrics_rec["recall@1"]
-                self.model.save_model(model_name= self.opt['save_exp_name'] + '_best_recom_model.pkl')
+                if not os.path.exists(self.opt['save_exp_name']):
+                    os.mkdir(self.opt['save_exp_name'])
+                self.model.save_model(model_path=self.opt['save_exp_name'], model_name='best_recom_model.pkl')
                 print("recommendation model saved once------------------------------------------------")
 
             if rec_stop==True:
@@ -484,7 +470,7 @@ class TrainLoop_fusion_gen():
                 pass
             else:
                 best_val_gen = output_metrics_gen["dist4"]
-                self.model.save_model(model_name= self.opt['save_exp_name'] + '_best_dist4.pkl')
+                self.model.save_model(model_path=self.opt['save_exp_name'], model_name='best_dist4.pkl')
                 print("Best Dist4 generator model saved once------------------------------------------------")
             print("best dist4 is :", best_val_gen)
 
@@ -492,7 +478,7 @@ class TrainLoop_fusion_gen():
                 pass
             else:
                 best_val_rec = output_metrics_gen["recall@50"] + output_metrics_gen["recall@1"]
-                self.model.save_model(model_name= self.opt['save_exp_name'] + '_best_Rec.pkl')
+                self.model.save_model(model_path=self.opt['save_exp_name'], model_name='best_Rec.pkl')
                 print("Best Recall generator model saved once------------------------------------------------")
             print("best res_movie_R@1 is :", output_metrics_gen["recall@1"])
             print("best res_movie_R@10 is :", output_metrics_gen["recall@10"])
