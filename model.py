@@ -799,8 +799,9 @@ class CrossModel(nn.Module):
         loss = self.criterion(output_view.cuda(), score_view.cuda())
         return loss
 
-    def save_model(self,model_name='saved_model/net_parameter1.pkl'):
-        torch.save(self.state_dict(), model_name)
+    def save_model(self, model_path='saved_model', model_name='net_parameter1.pkl'):
+        filename = os.path.join(model_path, model_name)
+        torch.save(self.state_dict(), filename)
 
     def load_model(self,model_name='saved_model/net_parameter1.pkl'):
         # self.load_state_dict(torch.load('saved_model/net_parameter1.pkl'))
