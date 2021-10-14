@@ -51,7 +51,7 @@ class dataset(object):
 
         #if 'train' in filename:
 
-        # self.prepare_word2vec()
+        self.prepare_word2vec()
         self.word2index = json.load(open('word2index_redial.json', encoding='utf-8'))
         self.key2index=json.load(open('key2index_3rd.json',encoding='utf-8'))
 
@@ -64,14 +64,14 @@ class dataset(object):
         import gensim
         # model=gensim.models.word2vec.Word2Vec(self.corpus,vector_size=300,min_count=1)
         model=gensim.models.word2vec.Word2Vec(self.corpus,size=300,min_count=1)
-        model.save('word2vec_redial')
+        # model.save('word2vec_redial')
         # word2index = {word: i + 4 for i, word in enumerate(model.wv.index_to_key)}
         word2index = {word: i + 4 for i, word in enumerate(model.wv.index2word)}
         #word2index['_split_']=len(word2index)+4
         #json.dump(word2index, open('word2index_redial.json', 'w', encoding='utf-8'), ensure_ascii=False)
         word2embedding = [[0] * 300] * 4 + [model[word] for word in word2index]+[[0]*300]
         import numpy as np
-        
+
         word2index['_split_']=len(word2index)+4
         print('---Saving word2vec data... ----')
         json.dump(word2index, open('word2index_redial.json', 'w', encoding='utf-8'), ensure_ascii=False)
@@ -94,7 +94,7 @@ class dataset(object):
             concept_mask.append(self.key2index.get(word.lower(),0))
             #else:
             #    concept_mask.append(0)
-            
+
             # if '@' in word:
             #     try:
             #         entity = self.id2entity[int(word[1:])]
@@ -104,7 +104,7 @@ class dataset(object):
             #     dbpedia_mask.append(id)
             # else:
             #     dbpedia_mask.append(self.entity_max)
-            
+
             if MOVIE_TOKEN in word:
             # if is_response and MOVIE_TOKEN in word:
                 movie_mask.append(1)
@@ -154,7 +154,7 @@ class dataset(object):
             #        concept_mask+(max_length-len(vector))*[0],dbpedia_mask+(max_length-len(vector))*[self.entity_max]
 
     def padding_all_movies(self,movies,max_length,transformer=True,pad=-1):
-        
+
 
         if len(movies)>max_length:
             # if transformer:
@@ -215,16 +215,16 @@ class dataset(object):
             else:
                 context_before = line['contexts']
 
-            
+
 
             context,c_lengths,concept_mask,dbpedia_mask,_=self.padding_context(line['contexts'])
             # context,c_lengths,concept_mask,dbpedia_mask_context,_=self.padding_context(line['contexts'])
             response,r_length,_,_,movies_gth=self.padding_w2v(line['response'],self.max_r_length,transformer=True,is_response=True,movies_gth=line['all_movies'])
-            
-            #padding all_movies 
+
+            #padding all_movies
             movies_gth, movies_num = self.padding_all_movies(movies_gth,self.max_r_length)
             # movies_gth, movies_num = self.padding_all_movies(line['all_movies'],self.max_r_length)
-            
+
             if False:
                 mask_response,mask_r_length,_,_,_=self.padding_w2v(self.response_delibration(line['response']),self.max_r_length)
             else:
@@ -350,14 +350,14 @@ class dataset(object):
             token_text,movie_rec,all_movie_selection_label,masked_movie_num=self.detect_movie(message['text'],movies)
             # if message['senderWorkerId']==re_id  and len(context_list)>0:
             #     token_text,movie_rec,all_movie_selection_label,masked_movie_num=self.detect_movie(message['text'],movies)
-                
+
             #     # print('processed context', u' '.join(token_text).encode('utf-8').strip())
             #     # print('movie rec:', movie_rec)
             #     # print('all_movie_selection_label :', all_movie_selection_label)
             # else:
             #     token_text,movie_rec,_,_=self.detect_movie(message['text'],movies)
             #     all_movie_selection_label=[]
-            
+
             if len(context_list)==0:
                 # context_dict={'text':token_text,'entity':entities+movie_rec,'user':message['senderWorkerId'],'movie':movie_rec}
                 context_dict={'text':token_text,'entity':entities+movie_rec,'user':message['senderWorkerId'],'movie':movie_rec,'movies_selection_labels': all_movie_selection_label}
@@ -395,8 +395,8 @@ class dataset(object):
             #     print(context_list[-1]['movies_selection_labels'])
             #     print(context_list[-1]['movie'])
             #     # print('-----------------------------------')
-            
-            
+
+
 
         cases=[]
         contexts=[]
