@@ -36,6 +36,20 @@ python run.py --is_finetune True
 
 The model will report the result on test data automatically after covergence.
 
+To run the novel experiments, you need to generate the ```data/full_data.jsonl``` first by combining the ```data/train_data.jsonl``` and ```data/test_data.jsonl``` into one file. 
+
+Then, run the following script to pretrained the recommender module.
+
+```python
+python run_novel.py
+```
+
+and the following step is the same as the conventional setting by runing the command below.
+
+```python
+python run_novel.py --is_finetune True
+```
+
 # Citation
 
 If you find this codebase helps your research, please kindly consider citing our paper in your publications.
