@@ -6,11 +6,20 @@ This repository is the Pytorch implementation of our paper "**Learning Neural Te
 In this paper, we introduce NTRD, a novel recommender dialogue system (i.e., conversational recommendation system) framework that decouples the dialogue generation from the item recommendation via a two-stage strategy. Our approach makes the recommender dialogue system more flexible and controllable. Extensive experiments show our approach significantly outperforms the previous state-of-the-art methods.
 
 # Dependencies
-pytorch==1.3.0, torch_geometric==1.3.2
+```
+pytorch==1.6.0
+gensim==3.8.3
+torch_geometric==1.6.3
+torch-cluster==1.5.8
+torch-scatter==2.0.5
+torch-sparse==0.6.8
+torch-spline-conv==1.2.0
+```
 
 
 
-the required data **word2vec_redial.npy** can be produced by the function ```dataset.prepare_word2vec()``` or directly download from the [Google Drive](https://drive.google.com/file/d/1BzwGgbUBilaEZXAu7e1SlvxSwcAfVe2w/view?usp=sharing) shared by [KGSF](https://github.com/RUCAIBox/KGSF).
+
+the required data **word2vec_redial.npy** can be produced by the function ```dataset.prepare_word2vec()```.
 
 # Run
 Run the script below to pre-train the recommender module. It would converge after 3 epochs pre-training and 3 epochs fine-tuning.
