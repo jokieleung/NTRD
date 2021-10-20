@@ -5,6 +5,8 @@ This repository is the Pytorch implementation of our paper "[**Learning Neural T
 
 In this paper, we introduce NTRD, a novel recommender dialogue system (i.e., conversational recommendation system) framework that decouples the dialogue generation from the item recommendation via a two-stage strategy. Our approach makes the recommender dialogue system more flexible and controllable. Extensive experiments show our approach significantly outperforms the previous state-of-the-art methods.
 
+The code is still being organized, feel free to contact me if you encounter any problems.
+
 # Dependencies
 ```
 pytorch==1.6.0
@@ -37,6 +39,8 @@ python run.py --is_finetune True
 The model will report the result on test data automatically after covergence.
 
 To run the novel experiments, you need to generate the ```data/full_data.jsonl``` first by combining the ```data/train_data.jsonl``` and ```data/test_data.jsonl``` into one file. 
+
+Also, you need to uncomment the code in ```dataset.py``` L117 and L317 - L 322.
 
 Then, run the following script to pretrained the recommender module.
 
