@@ -109,12 +109,12 @@ class dataset(object):
             # if is_response and MOVIE_TOKEN in word:
                 movie_mask.append(1)
                 try:
-                    # original movie gth
-                    # cur_movie_id = self.selection_label2movieID[movies_gth[cur_movie]]
-                    # entity = self.id2entity[int(cur_movie_id)]
-                    # id=self.entity2entityId[entity]
-                    #hacked for novel exp by Jokie 2021/05/01
-                    id=movies_gth[cur_movie]
+                    #WAY1: original movie gth
+                    cur_movie_id = self.selection_label2movieID[movies_gth[cur_movie]]
+                    entity = self.id2entity[int(cur_movie_id)]
+                    id=self.entity2entityId[entity]
+                    #WAY2: hacked for novel exp by Jokie 2021/05/01
+                    # id=movies_gth[cur_movie]
                 except:
                     id=self.entity_max
                 cur_movie+=1
@@ -313,13 +313,13 @@ class dataset(object):
             if token_text_com[i][1:] in movies:
                 movie_rec.append(token_text_com[i][1:])
                 # WAY1: movie gth movie vocab size
-                # all_movie_selection_label.append(self.movieID2selection_label[int(token_text_com[i][1:])])
+                all_movie_selection_label.append(self.movieID2selection_label[int(token_text_com[i][1:])])
                 # WAY2: entity Id way. hacked for novel exp by Jokie 2021/05/01
-                try:
-                    entity = self.id2entity[int(token_text_com[i][1:])]
-                    all_movie_selection_label.append(self.entity2entityId[entity])
-                except:
-                    all_movie_selection_label.append(self.entity_max)
+                # try:
+                #    entity = self.id2entity[int(token_text_com[i][1:])]
+                #    all_movie_selection_label.append(self.entity2entityId[entity])
+                #except:
+                #    all_movie_selection_label.append(self.entity_max)
                 token_text_com[i] = masked_movie_by
                 masked_movie_num+=1
         movie_rec_trans=[]
