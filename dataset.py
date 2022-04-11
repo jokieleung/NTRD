@@ -49,9 +49,8 @@ class dataset(object):
             cases=self._context_reformulate(contexts,movies,altitude,initial_altitude,seekerid,recommenderid)
             self.data.extend(cases)
 
-        #if 'train' in filename:
-
-        self.prepare_word2vec()
+        if 'train' in filename:
+            self.prepare_word2vec()
         self.word2index = json.load(open('word2index_redial.json', encoding='utf-8'))
         self.key2index=json.load(open('key2index_3rd.json',encoding='utf-8'))
 
