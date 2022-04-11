@@ -63,7 +63,7 @@ def setup_args():
     train.add_argument("-max_count","--max_count",type=int,default=5)
     train.add_argument("-use_cuda","--use_cuda",type=bool,default=True)
     train.add_argument("-is_template","--is_template",type=bool,default=True)
-    train.add_argument("-infomax_pretrain","--infomax_pretrain",type=bool,default=False)
+    train.add_argument("-infomax_pretrain","--infomax_pretrain",type=bool,default=True)
     train.add_argument("-load_dict","--load_dict",type=str,default=None)
     train.add_argument("-learningrate","--learningrate",type=float,default=1e-3)
     train.add_argument("-optimizer","--optimizer",type=str,default='adam')
